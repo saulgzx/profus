@@ -1,0 +1,21 @@
+game:
+  window_title: "Dofus"
+  resolution: [1920, 1080]
+  version: "retro"  # "retro" o "unity"
+
+farming:
+  mode: "resource"  # "resource" o "combat"
+  resources:
+    - "trigo"
+    - "madera"
+  map_path: []
+
+combat:
+  auto_fight: true
+  spells: [1, 2, 3]
+
+bot:
+  delay_min: 0.8
+  delay_max: 2.0
+  pause_key: "F10"
+  stop_key: "F12"
