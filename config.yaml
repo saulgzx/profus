@@ -1,21 +1,648 @@
-game:
-  window_title: "Dofus"
-  resolution: [1920, 1080]
-  version: "retro"  # "retro" o "unity"
-
-farming:
-  mode: "resource"  # "resource" o "combat"
-  resources:
-    - "trigo"
-    - "madera"
-  map_path: []
-
-combat:
-  auto_fight: true
-  spells: [1, 2, 3]
-
 bot:
-  delay_min: 0.8
-  delay_max: 2.0
-  pause_key: "F10"
-  stop_key: "F12"
+  actor_id: '121493758'
+  cell_calibration:
+    local_map_xml_dir: C:\Users\Alexis\Downloads\Bot-Dofus-1.29.1-master\mapas\mapas
+    map_origins:
+    - x: 6827
+      y: 1592
+    - x: 5580
+      y: 1238
+    map_origins_by_fingerprint:
+      105,238:
+        x: 5570
+        y: 1232
+      120,225,239,253:
+        x: 6317
+        y: 1403
+      120,238:
+        x: 6313
+        y: 1407
+      133,210,225,238,267:
+        x: 6078
+        y: 1420
+      133,239,253:
+        x: 6084
+        y: 1420
+      147,238:
+        x: 6338
+        y: 1520
+      148,210,224,238,252:
+        x: 6827
+        y: 1592
+      162,225,239,252:
+        x: 7082
+        y: 1697
+      211,226,241,254,255,269,366:
+        x: 7995.55
+        y: 2295.76
+      211,252:
+        x: 6857
+        y: 1720
+    map_origins_by_map_id:
+      '671':
+        x: 7352.43
+        y: 1778.43
+      '673':
+        x: 11338.15
+        y: 2883.15
+    map_width: 15
+    slopes:
+      col_x: -357.43
+      col_y: -77.43
+      row_x: -321
+      row_y: -63
+    visual_grid_by_map_id:
+      '177':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '2023':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '206':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '207':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '210':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '211':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '212':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '214':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '215':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '249':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '250':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '482':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '485':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '486':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '489':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '492':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '493':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '494':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '495':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '496':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '521':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '522':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '671':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '673':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '677':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '7394':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '7395':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '7397':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '7410':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '7414':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '7415':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '943':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '944':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '945':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '946':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '947':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '948':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '954':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+      '955':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 20.3
+        cell_width: 39.5
+        offset_x: 97.0
+        offset_y: -11.0
+    visual_grid_global:
+      cell_height: 20.3
+      cell_width: 39.5
+      offset_x: 97.0
+      offset_y: -11.0
+    world_map_samples_by_map_id:
+      '671':
+      - cell_id: 209
+        entity_kind: mob_group
+        grid_x: 14
+        grid_y: 1
+        mob_name: Boo
+        screen_x: 1147
+        screen_y: 484
+      - cell_id: 228
+        entity_kind: mob
+        grid_x: 20
+        grid_y: -4
+        mob_name: Boo
+        screen_x: 1739
+        screen_y: 517
+      - actor_id: '-2'
+        cell_id: 222
+        entity_kind: mob_group
+        grid_x: 12
+        grid_y: 3
+        mob_name: Boo
+        saved_at: 1775278691.978
+        screen_x: 953
+        screen_y: 522
+  collect_min_wait: 7.0
+  combat_auto_ready_delay: 0.12
+  combat_card_offset: 90
+  combat_center_move_duration: 0.02
+  combat_close_delay: 0.1
+  combat_entry_wait: 0.6
+  combat_frame_delay: 0.02
+  combat_idle_wait: 0.02
+  combat_menu_open_delay: 0.08
+  combat_ok_delay: 0.1
+  combat_pa: 6
+  combat_placement_settle_delay: 1.0
+  combat_poll_interval: 0.75
+  combat_poll_interval_max: 0.35
+  combat_poll_interval_min: 0.25
+  combat_popup_close_delay: 0.08
+  combat_popup_retry_delay: 0.1
+  combat_post_click_delay: 0.05
+  combat_post_click_delay_max: 0.05
+  combat_post_click_delay_min: 0.05
+  combat_pre_capture_delay: 0.03
+  combat_pre_spell_pause: 0.03
+  combat_profile: Sacrogito
+  combat_ready_delay: 0.12
+  combat_spell_pa_cost: 3
+  combat_spell_select_delay: 0.05
+  combat_spell_select_delay_max: 0.05
+  combat_spell_select_delay_min: 0.05
+  combat_turn_cooldown: 0.25
+  combat_turn_cooldown_max: 0.25
+  combat_turn_cooldown_min: 0.15
+  delay_max: 0.7
+  delay_min: 0.2
+  dismiss_after_click_max: 0.1
+  dismiss_after_click_min: 0.05
+  dismiss_pause_max: 0.05
+  dismiss_pause_min: 0.02
+  mob_scan_idle_delay: 0.5
+  pause_key: F10
+  pj_threshold: 0.4
+  quick_click_pause_max: 0.05
+  quick_click_pause_min: 0.01
+  quick_key_pause_max: 0.05
+  quick_key_pause_min: 0.01
+  quick_move_max: 0.06
+  quick_move_min: 0.01
+  sacrogito_self_pos:
+  - 2152
+  - 1248
+  scan_idle_delay: 0.6
+  sniffer_enabled: true
+  start_map_idx: 0
+  stop_key: F12
+  threshold: 0.55
+  ui_threshold: 0.85
+farming:
+  harvest_menu_offset:
+  - 46
+  - 70
+  menu_row_height: 28
+  mode: leveling
+  professions:
+    Campesino:
+      enabled: true
+      resources:
+      - Avena
+      - Cebada
+      - Trigo
+  resource_nodes_by_map_id:
+    '207':
+    - pos:
+      - 1358
+      - 638
+      profession: Campesino
+      resource: Trigo
+    - pos:
+      - 1344
+      - 652
+      profession: Campesino
+      resource: Trigo
+    - pos:
+      - 1381
+      - 707
+      profession: Campesino
+      resource: Trigo
+    - pos:
+      - 1302
+      - 662
+      profession: Campesino
+      resource: Trigo
+    '406':
+    - pos:
+      - 692
+      - 177
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 626
+      - 211
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 496
+      - 212
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 561
+      - 245
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1676
+      - 342
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1741
+      - 376
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1807
+      - 409
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1938
+      - 411
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 627
+      - 610
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 758
+      - 611
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 692
+      - 642
+      profession: Campesino
+      resource: Avena
+    '523':
+    - pos:
+      - 1315
+      - 225
+      profession: Campesino
+      resource: Trigo
+    - pos:
+      - 1434
+      - 318
+      profession: Campesino
+      resource: Trigo
+    - pos:
+      - 1529
+      - 341
+      profession: Campesino
+      resource: Trigo
+    - pos:
+      - 1554
+      - 207
+      profession: Campesino
+      resource: Trigo
+    '527':
+    - pos:
+      - 430
+      - 40
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 561
+      - 40
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1086
+      - 646
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1020
+      - 678
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1151
+      - 679
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 955
+      - 709
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1348
+      - 711
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1282
+      - 742
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 758
+      - 745
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 692
+      - 775
+      profession: Campesino
+      resource: Avena
+    - pos:
+      - 1151
+      - 811
+      profession: Campesino
+      resource: Avena
+  route_profile: Boo's
+  use_sprite_fallback: false
+game:
+  game_roi:
+    bottom: 0.82
+    left: 0.02
+    right: 0.87
+    top: 0.04
+  monitor: 2
+  resolution:
+  - 2560
+  - 1440
+  version: retro
+  window_title: Dofus
+leveling:
+  attack_menu_offset:
+  - -60
+  - 30
+  follow_player_actor_ids:
+  - '16812'
+  follow_player_db:
+    '16812':
+      enabled: true
+      name: Birtz
+  follow_player_selected_actor_id: '16812'
+  follow_players_enabled: false
+  join_external_fights_actor_id: '16812'
+  join_external_fights_any: true
+  mobs:
+    Boo:
+      enabled: true
+      template_ids:
+      - 112
+    Prespic:
+      enabled: true
+      template_ids:
+      - 103
+  route_profile: Boo's
+  template_id_db:
+    '103': Prespic
+    '115': Boo
+    '159': Minilubo
+    '343': Caballero Puerkazo
+    '344': Pastor Puerkazo
+    '52': Arakna
+    '59': Champi Champ
+    '63': Cangrejo
+navigation:
+  empty_scans_before_move: 6
+  enabled: true
+  route: &id001 []
+  route_by_map_id: &id002
+    '673':
+    - 2141
+    - 930
+    '677':
+    - 1093
+    - 57
+    '946':
+    - 1086
+    - 1061
+    '947':
+    - 427
+    - 392
+  route_profiles:
+    Boo's:
+      route: *id001
+      route_by_map_id: *id002

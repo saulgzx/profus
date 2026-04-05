@@ -1,3 +1,8 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(__file__))
+sys.stdout.reconfigure(encoding="utf-8")
+
 import yaml
 import time
 from pynput import keyboard
@@ -20,7 +25,9 @@ def on_press(key):
         print("[BOT] Detenido")
 
 
-def load_config(path="config.yaml"):
+def load_config(path=None):
+    if path is None:
+        path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -38,7 +45,7 @@ def main():
     while running:
         if not paused:
             bot.tick()
-        time.sleep(config["bot"]["delay_min"])
+        time.sleep(0.1)  # loop rapido, los delays estan dentro del bot
 
     listener.stop()
     print("[BOT] Finalizado.")

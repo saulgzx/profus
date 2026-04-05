@@ -11,3 +11,13 @@ dist/
 build/
 .idea/
 .vscode/settings.json
+.tmp_ext/
+*.lnk
+gui_error.log
+grid_debug_*.png
+live_monitor_capture.png
+live_pj_roi.png
+pj_card_debug.png
+pj_card_mask_debug.png
+screenshot_debug.png
+query
