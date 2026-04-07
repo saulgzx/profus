@@ -31,6 +31,7 @@ class CombatContext:
       my_cell          — cell_id actual del personaje (None si no se conoce)
     """
     def __init__(self, screen, ui_detector, actions, config,
+                 enemies: list | None = None,
                  enemy_positions: list | None = None,
                  current_pa: int | None = None,
                  current_mp: int | None = None,
@@ -41,7 +42,9 @@ class CombatContext:
                  refresh_combat_state=None,
                  project_self_cell=None,
                  move_towards_enemy=None,
-                 enemy_in_melee_range=None):
+                 enemy_in_melee_range=None,
+                 has_line_of_sight=None,
+                 cell_distance=None):
         self.screen          = screen
         self.ui_detector     = ui_detector
         self.actions         = actions
@@ -49,14 +52,18 @@ class CombatContext:
         self.enemy_positions = enemy_positions or []
         self.current_pa      = current_pa
         self.current_mp      = current_mp
+        self.enemies         = enemies or []
         self.my_cell         = my_cell
         self.turn_number     = turn_number
         self.combat_probe    = combat_probe
         self.buff_flags      = buff_flags or {}
+        self.spell_cooldowns = dict(self.buff_flags.get("spell_cooldowns") or {})
         self.refresh_combat_state = refresh_combat_state
         self.project_self_cell = project_self_cell
         self.move_towards_enemy = move_towards_enemy
         self.enemy_in_melee_range = enemy_in_melee_range
+        self.has_line_of_sight = has_line_of_sight
+        self.cell_distance = cell_distance
 
 
 class CombatProfile:
@@ -65,6 +72,14 @@ class CombatProfile:
     needs_panel = True        # False para perfiles que no necesitan desplegar el panel de combate
     mi_turno_template = "MiTurno"  # None para perfiles que no usan template de turno
     uses_listo_template = True
+
+    def placement_score(self, cell_id: int, self_distance: int, enemy_distances: list[int]) -> tuple:
+        """Puntuación de una celda para posicionamiento inicial. Menor es mejor."""
+        return (min(enemy_distances) if enemy_distances else 999, self_distance, cell_id)
+
+    def movement_score(self, cell_id: int, self_distance: int, enemy_distances: list[int]) -> tuple:
+        """Puntuación de una celda para el movimiento del turno. Menor es mejor."""
+        return (min(enemy_distances) if enemy_distances else 999, -self_distance, cell_id)
 
     def on_placement(self, listo_pos: tuple, ctx: CombatContext) -> None:
         """Llamado cuando el boton Listo es visible (fase de colocacion)."""

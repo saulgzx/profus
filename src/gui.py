@@ -30,6 +30,7 @@ from pynput import keyboard as kb
 from bot import Bot
 from detector import Detector
 from map_logic import cell_id_to_grid
+from combat import load_profile
 
 RESOURCES_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "templates", "resources")
 UI_DIR        = os.path.join(os.path.dirname(__file__), "..", "assets", "templates", "ui")
@@ -286,6 +287,26 @@ class _PJCaptureWindow(ResourceCaptureWindow):
         self.destroy()
 
 
+class _MobIconCaptureWindow(ResourceCaptureWindow):
+    """Variante de captura que siempre guarda como _icon.png para preview de GUI."""
+
+    def _save_crop(self):
+        if not self._sel:
+            messagebox.showwarning("Sin seleccion", "Arrastra para seleccionar un area primero.", parent=self)
+            return
+        x1, y1, x2, y2 = self._sel
+        if (x2 - x1) < 5 or (y2 - y1) < 5:
+            messagebox.showwarning("Seleccion muy pequena", "Selecciona un area mas grande.", parent=self)
+            return
+        os.makedirs(self.save_dir, exist_ok=True)
+        save_path = os.path.join(self.save_dir, "_icon.png")
+        crop = self._screenshot.crop((x1, y1, x2, y2))
+        crop.save(save_path)
+        messagebox.showinfo("Guardado", f"_icon.png guardado ({x2-x1}x{y2-y1}px)", parent=self)
+        self.on_saved("_icon")
+        self.destroy()
+
+
 # ================================================================= BotThread ==
 class BotThread(threading.Thread):
     def __init__(self, config, log_queue, test_mode: bool = False):
@@ -307,7 +328,13 @@ class BotThread(threading.Thread):
             self.log_queue.put(("log", "[BOT] Iniciado"))
             while self._running:
                 if not self._paused:
-                    self.bot.tick()
+                    try:
+                        self.bot.tick()
+                    except Exception as e:
+                        import traceback
+                        error_msg = traceback.format_exc()
+                        self.log_queue.put(("log", f"[ERROR FATAL] Bot se detuvo por un error:\n{error_msg}"))
+                        break
                 loop_sleep = 0.1
                 if self.bot and self.bot.sniffer_active:
                     mode = self.bot.config.get("farming", {}).get("mode", "resource")
@@ -404,8 +431,13 @@ class App(tk.Tk):
         self._resource_node_sprite_label = None
         self._resource_node_sprite_name_var = tk.StringVar(value="Sprite: sin recurso")
         self.mob_vars = {}
+        self.mob_ignore_vars = {}
         self.mob_template_vars = {}
         self.mob_images = {}
+        self._mob_card_collapsed = {}
+        self._mob_search_var = tk.StringVar(value="")
+        self._mob_search_var.trace_add("write", self._on_mob_search_changed)
+        self._mob_search_entry = None
         self.mobs_frame = None
         self._raw_log_cb = None
         self._notebook = None
@@ -437,9 +469,50 @@ class App(tk.Tk):
         self._sniffer_grid_polygons = []
         self._sniffer_events_text = None
         self._sniffer_payload_text = ""
+        self._sniffer_body_left = None
+        self._sniffer_body_center = None
+        self._sniffer_body_right = None
+        self._responsive_after_id = None
+        self._header_frame = None
+        self._header_left = None
+        self._header_right = None
+        self._main_module_frame = None
+        self._main_module_content = None
+        self._main_module_title_label = None
+        self._main_module_collapsed = False
+        self._main_module_cards = None
+        self._main_module_form = None
+        self._actor_form_label = None
+        self._actor_form_entry = None
+        self._actor_form_button = None
+        self._bottom_frame = None
+        self._bottom_controls_host = None
+        self._bottom_info_host = None
+        self._status_frame = None
+        self._log_frame = None
+        self._notebook = None
+        self._scrollable_tab_canvases = {}
+        self._database_frame = None
+        self._mob_db_filter_id_var = tk.StringVar(value="Todos")
+        self._mob_db_filter_name_var = tk.StringVar(value="Todos")
+        self._mob_db_search_name_var = tk.StringVar(value="")
+        self._mob_db_sort_var = tk.StringVar(value="ID asc")
+        self._player_db_filter_id_var = tk.StringVar(value="Todos")
+        self._player_db_filter_name_var = tk.StringVar(value="Todos")
+        self._player_db_search_name_var = tk.StringVar(value="")
+        self._player_db_sort_var = tk.StringVar(value="ID asc")
+        self._app_scroll_canvas = None
+        self._app_scroll_body = None
+        self._main_runtime_actor_var = tk.StringVar(value="sin configurar")
+        self._main_runtime_profile_var = tk.StringVar(value=str(self.config_data.get("bot", {}).get("combat_profile", "-")))
+        self._main_runtime_mode_var = tk.StringVar(value=str(self.config_data.get("farming", {}).get("mode", "-")))
+        self._main_runtime_map_var = tk.StringVar(value="-")
+        self._main_runtime_sniffer_var = tk.StringVar(value="inactivo")
 
         self._setup_hotkeys()
         self._build_ui()
+        self.bind("<Configure>", self._schedule_responsive_layout)
+        self.after_idle(self._apply_responsive_layout)
         self._poll_queue()
 
     def _write_gui_exception(self, label: str, exc_type, exc_value, exc_tb):
@@ -509,6 +582,83 @@ class App(tk.Tk):
         lbl.bind("<Button-1>", toggle)
         return header, content
 
+    def _is_descendant_widget(self, widget, ancestor) -> bool:
+        current = widget
+        while current is not None:
+            if str(current) == str(ancestor):
+                return True
+            parent_name = current.winfo_parent()
+            if not parent_name:
+                break
+            try:
+                current = current.nametowidget(parent_name)
+            except Exception:
+                break
+        return False
+
+    def _has_inner_scroll_owner(self, widget, stop_at=None) -> bool:
+        scroll_classes = {"Text", "Treeview", "Listbox"}
+        current = widget
+        while current is not None:
+            if stop_at is not None and str(current) == str(stop_at):
+                return False
+            try:
+                if current.winfo_class() in scroll_classes:
+                    return True
+            except Exception:
+                return False
+            parent_name = current.winfo_parent()
+            if not parent_name:
+                break
+            try:
+                current = current.nametowidget(parent_name)
+            except Exception:
+                break
+        return False
+
+    def _scroll_canvas_from_event(self, canvas, ev):
+        if canvas is None or not canvas.winfo_exists():
+            return None
+        top, bottom = canvas.yview()
+        delta = getattr(ev, "delta", 0)
+        if delta:
+            step = int(-1 * (delta / 120))
+        elif getattr(ev, "num", None) == 4:
+            step = -1
+        elif getattr(ev, "num", None) == 5:
+            step = 1
+        else:
+            step = 0
+        if step == 0:
+            return None
+        if step < 0 and top <= 0.0:
+            return "break"
+        if step > 0 and bottom >= 1.0:
+            return "break"
+        canvas.yview_scroll(step, "units")
+        return "break"
+
+    def _handle_global_mousewheel(self, ev):
+        notebook = self._notebook
+        if notebook is None or not notebook.winfo_exists():
+            return None
+        selected_tab_id = notebook.select()
+        if not selected_tab_id:
+            return None
+        canvas = self._scrollable_tab_canvases.get(selected_tab_id)
+        if canvas is None:
+            return None
+        try:
+            selected_tab = notebook.nametowidget(selected_tab_id)
+        except Exception:
+            return None
+        widget = getattr(ev, "widget", None)
+        if widget is None or not self._is_descendant_widget(widget, selected_tab):
+            return None
+        if self._has_inner_scroll_owner(widget, stop_at=selected_tab):
+            return None
+        return self._scroll_canvas_from_event(canvas, ev)
+
     def _make_scrollable_tab(self, notebook, title: str):
         """Crea una pestaña con canvas scrolleable. Devuelve (tab_frame, body_frame)."""
         tab = tk.Frame(notebook, bg=BG)
@@ -525,11 +675,7 @@ class App(tk.Tk):
         body.bind("<Configure>", lambda e: canvas.configure(
             scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(win_id, width=e.width))
-
-        # Scroll con rueda del ratón solo cuando el cursor está sobre esta pestaña
-        canvas.bind("<Enter>", lambda e: canvas.bind_all(
-            "<MouseWheel>", lambda ev: canvas.yview_scroll(int(-1*(ev.delta/120)), "units")))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        self._scrollable_tab_canvases[str(tab)] = canvas
 
         return tab, body
 
@@ -537,9 +683,11 @@ class App(tk.Tk):
         # ── Header fijo ──────────────────────────────────────────────────
         header = tk.Frame(self, bg=ACCENT, pady=8)
         header.pack(fill="x")
+        self._header_frame = header
 
         left = tk.Frame(header, bg=ACCENT)
         left.pack(side="left", padx=12)
+        self._header_left = left
         tk.Label(left, text="Dofus AutoFarm", bg=ACCENT, fg=TEXT,
                  font=("Segoe UI", 13, "bold")).pack(anchor="w")
         tk.Label(left, text="F10 Pausa  |  F12 Iniciar/Detener", bg=ACCENT, fg=SUBTEXT,
@@ -547,6 +695,7 @@ class App(tk.Tk):
 
         right = tk.Frame(header, bg=ACCENT)
         right.pack(side="right", padx=12)
+        self._header_right = right
         self.btn_test = tk.Button(right, text="Iniciar TEST", bg=BLUE, fg=BG,
                                   font=("Segoe UI", 10, "bold"),
                                   relief="flat", padx=16, pady=6,
@@ -564,6 +713,11 @@ class App(tk.Tk):
                                    state="disabled")
         self.btn_pause.pack(side="left")
 
+        main_module = tk.Frame(self, bg=PANEL, padx=16, pady=10)
+        main_module.pack(fill="x")
+        self._main_module_frame = main_module
+        self._build_main_module(main_module)
+
         # ── Notebook (pestañas) ───────────────────────────────────────────
         style = ttk.Style(self)
         style.theme_use("clam")
@@ -580,6 +734,9 @@ class App(tk.Tk):
         notebook = ttk.Notebook(self, style="Dark.TNotebook")
         self._notebook = notebook
         notebook.pack(fill="both", expand=True, padx=0, pady=0)
+        self.bind_all("<MouseWheel>", self._handle_global_mousewheel, add="+")
+        self.bind_all("<Button-4>", self._handle_global_mousewheel, add="+")
+        self.bind_all("<Button-5>", self._handle_global_mousewheel, add="+")
 
         # ── Pestaña 1: Farming ───────────────────────────────────────────
         _, farm_body = self._make_scrollable_tab(notebook, "Farming")
@@ -603,6 +760,9 @@ class App(tk.Tk):
         _, route_body = self._make_scrollable_tab(notebook, "Rutas")
         self._build_navigation_content(route_body, nav_cfg)
 
+        _, profile_body = self._make_scrollable_tab(notebook, "Perfil")
+        self._build_profile_tab(profile_body)
+
         # ── Pestaña 2: Mobs / Auto-Nivel ─────────────────────────────────
         _, mob_body = self._make_scrollable_tab(notebook, "Mobs / Auto-Nivel")
 
@@ -610,19 +770,31 @@ class App(tk.Tk):
         self.mobs_frame.pack(fill="x")
         self._refresh_mobs()
 
+        _, db_body = self._make_scrollable_tab(notebook, "Base de datos")
+        self._database_frame = tk.Frame(db_body, bg=BG)
+        self._database_frame.pack(fill="x")
+        self._refresh_database_tab()
+
         _, sniffer_body = self._make_scrollable_tab(notebook, "Sniffer")
         self._build_sniffer_tab(sniffer_body)
 
         # ── Zona fija inferior (Control + Status + Log) ───────────────────
         bottom = tk.Frame(self, bg=BG, padx=16, pady=6)
         bottom.pack(fill="x", side="bottom")
+        self._bottom_frame = bottom
 
         ttk.Separator(bottom, orient="horizontal").pack(fill="x", pady=(0, 6))
-        _, cnt = self._collapsible_section(bottom, "Control")
+        bottom_content = tk.Frame(bottom, bg=BG)
+        bottom_content.pack(fill="x")
+        controls_host = tk.Frame(bottom_content, bg=BG)
+        info_host = tk.Frame(bottom_content, bg=BG)
+        self._bottom_controls_host = controls_host
+        self._bottom_info_host = info_host
+        _, cnt = self._collapsible_section(controls_host, "Control")
         self._build_controls(cnt)
-        ttk.Separator(bottom, orient="horizontal").pack(fill="x", pady=6)
-        self._build_status(bottom)
-        self._build_log(bottom)
+        ttk.Separator(info_host, orient="horizontal").pack(fill="x", pady=(0, 6))
+        self._build_status(info_host)
+        self._build_log(info_host)
 
     def _build_resources(self, parent):
         self.resources_frame = tk.Frame(parent, bg=PANEL)
@@ -1032,7 +1204,216 @@ class App(tk.Tk):
     def _sync_runtime_bot_config(self):
         if not self.bot_thread or not self.bot_thread.bot:
             return
-        self.bot_thread.bot.config = load_config()
+        bot = self.bot_thread.bot
+        bot.config = load_config()
+        configured_actor = bot.config.get("bot", {}).get("actor_id")
+        bot._configured_actor_id = str(configured_actor).strip() if configured_actor not in (None, "") else None
+        if bot._configured_actor_id:
+            bot._set_my_actor_id(bot._configured_actor_id, "gui_actor_id")
+        profile_name = bot.config.get("bot", {}).get("combat_profile", bot.combat_profile.name)
+        bot.combat_profile = load_profile(profile_name)
+
+    def _build_main_module(self, parent):
+        title = tk.Label(parent, text="▼ Modulo principal", bg=PANEL, fg=GREEN,
+                         font=("Segoe UI", 10, "bold"), cursor="hand2")
+        title.pack(anchor="w")
+        title.bind("<Button-1>", lambda _e: self._toggle_main_module())
+        self._main_module_title_label = title
+
+        content = tk.Frame(parent, bg=PANEL)
+        content.pack(fill="x")
+        self._main_module_content = content
+
+        tk.Label(
+            content,
+            text="Selecciona el Actor ID del PJ actual. Si cambias de personaje, actualizalo aqui.",
+            bg=PANEL,
+            fg=SUBTEXT,
+            font=("Segoe UI", 8),
+            justify="left",
+        ).pack(anchor="w", pady=(2, 8))
+
+        cards = tk.Frame(content, bg=PANEL)
+        cards.pack(fill="x", pady=(0, 8))
+        self._main_module_cards = cards
+        self._build_main_summary_cards(cards)
+
+        actor_row = tk.Frame(content, bg=PANEL)
+        actor_row.pack(fill="x")
+        self._main_module_form = actor_row
+        actor_label = tk.Label(actor_row, text="Actor ID del PJ actual:", bg=PANEL, fg=TEXT,
+                               font=("Segoe UI", 9))
+        actor_label.pack(side="left")
+        self._actor_form_label = actor_label
+        current_actor_id = str(self.config_data.get("bot", {}).get("actor_id", "") or "")
+        self._primary_actor_id_var = tk.StringVar(value=current_actor_id)
+        actor_entry = tk.Entry(
+            actor_row,
+            textvariable=self._primary_actor_id_var,
+            width=16,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+            font=("Consolas", 10),
+        )
+        actor_entry.pack(side="left", padx=(8, 6))
+        self._actor_form_entry = actor_entry
+        actor_button = tk.Button(
+            actor_row,
+            text="Guardar",
+            bg=GREEN,
+            fg=BG,
+            font=("Segoe UI", 8, "bold"),
+            relief="flat",
+            padx=8,
+            pady=2,
+            cursor="hand2",
+            command=self._save_primary_actor_id,
+        )
+        actor_button.pack(side="left")
+        self._actor_form_button = actor_button
+
+        self._primary_actor_status_var = tk.StringVar(
+            value=f"Actual: {current_actor_id or 'sin configurar'}"
+        )
+        tk.Label(content, textvariable=self._primary_actor_status_var, bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8, "italic")).pack(anchor="w", pady=(6, 0))
+
+    def _set_main_module_collapsed(self, collapsed: bool):
+        self._main_module_collapsed = bool(collapsed)
+        if self._main_module_title_label is not None:
+            arrow = "▶" if self._main_module_collapsed else "▼"
+            actor_value = self._main_runtime_actor_var.get() or "sin configurar"
+            profile_value = self._main_runtime_profile_var.get() or "-"
+            mode_value = self._main_runtime_mode_var.get() or "-"
+            summary = f"  |  actor={actor_value}  |  perfil={profile_value}  |  modo={mode_value}"
+            self._main_module_title_label.config(
+                text=f"{arrow} Modulo principal{summary if self._main_module_collapsed else ''}"
+            )
+        if self._main_module_content is not None:
+            if self._main_module_collapsed:
+                self._main_module_content.pack_forget()
+            else:
+                self._main_module_content.pack(fill="x")
+
+    def _toggle_main_module(self):
+        self._set_main_module_collapsed(not self._main_module_collapsed)
+
+    def _build_main_summary_cards(self, parent):
+        cards = [
+            ("Actor activo", self._main_runtime_actor_var, GREEN),
+            ("Perfil", self._main_runtime_profile_var, BLUE),
+            ("Modo", self._main_runtime_mode_var, YELLOW),
+            ("Map ID", self._main_runtime_map_var, TEXT),
+            ("Sniffer", self._main_runtime_sniffer_var, GREEN),
+        ]
+        for title, value_var, color in cards:
+            card = tk.Frame(parent, bg=BG, padx=10, pady=8, bd=1, relief="flat")
+            card.pack(side="left", fill="x", expand=True, padx=(0, 8))
+            tk.Label(card, text=title, bg=BG, fg=SUBTEXT, font=("Segoe UI", 8, "bold")).pack(anchor="w")
+            tk.Label(card, textvariable=value_var, bg=BG, fg=color, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(4, 0))
+
+    def _schedule_responsive_layout(self, _event=None):
+        if self._responsive_after_id is not None:
+            try:
+                self.after_cancel(self._responsive_after_id)
+            except Exception:
+                pass
+        self._responsive_after_id = self.after(80, self._apply_responsive_layout)
+
+    def _apply_responsive_layout(self):
+        self._responsive_after_id = None
+        width = max(1, int(self.winfo_width() or 0))
+
+        if self._header_left is not None and self._header_right is not None:
+            self._header_left.pack_forget()
+            self._header_right.pack_forget()
+            if width < 760:
+                self._header_left.pack(fill="x", padx=12, anchor="w")
+                self._header_right.pack(fill="x", padx=12, pady=(8, 0), anchor="w")
+                for button in (self.btn_test, self.btn_toggle, self.btn_pause):
+                    button.pack_configure(side="top", fill="x", padx=0, pady=(0, 6))
+            else:
+                self._header_left.pack(side="left", padx=12)
+                self._header_right.pack(side="right", padx=12)
+                self.btn_test.pack_configure(side="left", fill="none", padx=(0, 6), pady=0)
+                self.btn_toggle.pack_configure(side="left", fill="none", padx=(0, 6), pady=0)
+                self.btn_pause.pack_configure(side="left", fill="none", padx=0, pady=0)
+
+        if self._main_module_content is not None:
+            if width < 700 and not self._main_module_collapsed:
+                self._set_main_module_collapsed(True)
+            elif width >= 700 and self._main_module_collapsed:
+                self._set_main_module_collapsed(False)
+
+        if self._main_module_cards is not None:
+            card_widgets = list(self._main_module_cards.winfo_children())
+            for idx, card in enumerate(card_widgets):
+                card.pack_forget()
+                if width < 760:
+                    card.pack(fill="x", expand=True, padx=0, pady=(0, 6))
+                else:
+                    padx = (0, 8) if idx < len(card_widgets) - 1 else 0
+                    card.pack(side="left", fill="x", expand=True, padx=padx, pady=0)
+
+        if self._main_module_form is not None and self._actor_form_label is not None and self._actor_form_entry is not None and self._actor_form_button is not None:
+            self._actor_form_label.pack_forget()
+            self._actor_form_entry.pack_forget()
+            self._actor_form_button.pack_forget()
+            if width < 720:
+                self._actor_form_label.pack(anchor="w")
+                self._actor_form_entry.pack(fill="x", pady=(6, 6))
+                self._actor_form_button.pack(anchor="w")
+            else:
+                self._actor_form_label.pack(side="left")
+                self._actor_form_entry.pack(side="left", padx=(8, 6))
+                self._actor_form_button.pack(side="left")
+
+        if self._bottom_controls_host is not None and self._bottom_info_host is not None:
+            self._bottom_controls_host.pack_forget()
+            self._bottom_info_host.pack_forget()
+            if width < 980:
+                self._bottom_controls_host.pack(fill="x")
+                self._bottom_info_host.pack(fill="x", pady=(10, 0))
+            else:
+                self._bottom_controls_host.pack(side="left", fill="x", expand=True, padx=(0, 10))
+                self._bottom_info_host.pack(side="left", fill="both", expand=True)
+
+        if self._sniffer_body_left is not None and self._sniffer_body_center is not None and self._sniffer_body_right is not None:
+            self._sniffer_body_left.pack_forget()
+            self._sniffer_body_center.pack_forget()
+            self._sniffer_body_right.pack_forget()
+            if width < 1180:
+                self._sniffer_body_left.pack(fill="both", expand=True, pady=(0, 10))
+                self._sniffer_body_center.pack(fill="both", expand=True, pady=(0, 10))
+                self._sniffer_body_right.pack(fill="both", expand=True)
+            else:
+                self._sniffer_body_left.pack(side="left", fill="both", expand=True)
+                self._sniffer_body_center.pack(side="left", fill="both", expand=True, padx=(10, 0))
+                self._sniffer_body_right.pack(side="left", fill="both", expand=True, padx=(10, 0))
+
+    def _refresh_main_runtime_summary(self):
+        bot_cfg = self.config_data.get("bot", {})
+        farming_cfg = self.config_data.get("farming", {})
+        bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+        actor_value = str(bot_cfg.get("actor_id", "") or "sin configurar")
+        profile_value = str(bot_cfg.get("combat_profile", "-") or "-")
+        mode_value = str(farming_cfg.get("mode", "-") or "-")
+        map_value = "-"
+        sniffer_value = "configurado" if bool(bot_cfg.get("sniffer_enabled", False)) else "inactivo"
+        if bot is not None:
+            actor_value = str(getattr(bot, "_sniffer_my_actor", None) or actor_value)
+            profile_value = str(getattr(getattr(bot, "combat_profile", None), "name", profile_value) or profile_value)
+            mode_value = str(bot.config.get("farming", {}).get("mode", mode_value) or mode_value)
+            current_map = getattr(bot, "_current_map_id", None)
+            map_value = str(current_map) if current_map is not None else "-"
+            sniffer_value = "activo" if bot.sniffer_active else sniffer_value
+        self._main_runtime_actor_var.set(actor_value)
+        self._main_runtime_profile_var.set(profile_value)
+        self._main_runtime_mode_var.set(mode_value)
+        self._main_runtime_map_var.set(map_value)
+        self._main_runtime_sniffer_var.set(sniffer_value)
 
     def _refresh_resource_node_list(self):
         if self._resource_node_listbox is None:
@@ -1389,6 +1770,32 @@ class App(tk.Tk):
                 command=lambda d=label.lower(): self._nav_store_map_exit_direction(d),
             ).pack(side="left", padx=(6, 0))
 
+        tk.Button(
+            exit_row,
+            text="Celda específica",
+            bg=BLUE,
+            fg=BG,
+            font=("Segoe UI", 8, "bold"),
+            relief="flat",
+            padx=8,
+            pady=2,
+            cursor="hand2",
+            command=self._nav_store_map_exit_cell,
+        ).pack(side="left", padx=(12, 0))
+
+        tk.Button(
+            exit_row,
+            text="Capturar Celda (3s)",
+            bg=ACCENT,
+            fg=TEXT,
+            font=("Segoe UI", 8),
+            relief="flat",
+            padx=8,
+            pady=2,
+            cursor="hand2",
+            command=self._nav_capture_cell_for_map,
+        ).pack(side="left", padx=(6, 0))
+
         list_row = tk.Frame(frame, bg=PANEL)
         list_row.pack(fill="x", padx=10, pady=(4, 0))
         tk.Label(list_row, text="Ruta fallback (sin map_id):", bg=PANEL, fg=SUBTEXT,
@@ -1587,6 +1994,80 @@ class App(tk.Tk):
         self._save_navigation()
         self._log_nav(f"Salida automática guardada map_id={map_id}: {direction}")
 
+    def _nav_store_map_exit_cell(self):
+        map_id = self._selected_nav_map_id()
+        if not map_id:
+            messagebox.showwarning("Sin map_id", "Primero selecciona un map_id o usa 'Usar actual'.", parent=self)
+            return
+        cell_str = simpledialog.askstring("Salida por Celda", "Ingresa el ID de la celda (ej: puerta, zaap o sol):", parent=self)
+        if not cell_str:
+            return
+        try:
+            cell_id = int(cell_str.strip())
+        except ValueError:
+            messagebox.showwarning("ID Inválido", "El ID de la celda debe ser un número entero.", parent=self)
+            return
+        self._nav_store_map_exit_cell_direct(cell_id)
+
+    def _nav_capture_cell_for_map(self):
+        map_id = self._selected_nav_map_id()
+        if not map_id:
+            messagebox.showwarning("Sin map_id", "Primero selecciona un map_id o usa 'Usar actual'.", parent=self)
+            return
+        bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+        if not bot or str(bot._current_map_id) != str(map_id):
+            messagebox.showwarning("Mapa no coincide", "El bot debe estar corriendo en el mapa actual para proyectar celdas.", parent=self)
+            return
+        
+        self._log_nav(f"Capturando celda para map_id {map_id} en 3 segundos...")
+        import pyautogui
+        def _do():
+            time.sleep(3)
+            x, y = pyautogui.position()
+            self.after(0, lambda: self._process_captured_cell(map_id, x, y, bot))
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _process_captured_cell(self, map_id: str, x: int, y: int, bot):
+        cells = bot.get_current_map_cells_snapshot()
+        best_cell = None
+        best_dist = float('inf')
+        for cell in cells:
+            cid = cell.get("cell_id")
+            if cid is None:
+                continue
+            pos = bot._cell_to_screen(int(cid))
+            if not pos:
+                continue
+            dist = ((pos[0] - x)**2 + (pos[1] - y)**2)**0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_cell = cid
+                
+        if best_cell is not None and best_dist < 80:  # Tolerancia de 80 px (tamaño razonable de celda)
+            self._log_nav(f"Celda detectada: {best_cell} (distancia: {best_dist:.1f}px)")
+            self._nav_store_map_exit_cell_direct(int(best_cell))
+        else:
+            self._log_nav(f"No se encontró una celda cerca de la posición del mouse ({x}, {y})")
+            messagebox.showwarning("Celda no encontrada", "No se pudo proyectar ninguna celda cerca del mouse. Asegúrate de tener la grilla calibrada.", parent=self)
+
+    def _nav_store_map_exit_cell_direct(self, cell_id: int):
+        map_id = self._selected_nav_map_id()
+        if not map_id:
+            return
+        direction = f"cell:{cell_id}"
+        prefix = f"{map_id} ->"
+        for i in range(self._nav_map_route_listbox.size()):
+            item = self._nav_map_route_listbox.get(i)
+            if item.startswith(prefix):
+                self._nav_map_route_listbox.delete(i)
+                self._nav_map_route_listbox.insert(i, f"{map_id} -> auto:{direction}")
+                self._save_navigation()
+                self._log_nav(f"Salida por celda guardada map_id={map_id}: {direction}")
+                return
+        self._nav_map_route_listbox.insert("end", f"{map_id} -> auto:{direction}")
+        self._save_navigation()
+        self._log_nav(f"Salida por celda guardada map_id={map_id}: {direction}")
+
     def _nav_remove_map_point(self):
         sel = self._nav_map_route_listbox.curselection()
         if not sel:
@@ -1674,11 +2155,208 @@ class App(tk.Tk):
     def _log_nav(self, msg: str):
         self.log_queue.put(("log", f"[NAV] {msg}"))
 
+    def _build_profile_tab(self, parent):
+        self._profile_tab_frame = tk.Frame(parent, bg=BG)
+        self._profile_tab_frame.pack(fill="both", expand=True)
+        
+        top = tk.Frame(self._profile_tab_frame, bg=BG)
+        top.pack(fill="x", pady=(8, 6))
+        tk.Label(top, text="Perfiles de Teleport / Secuencias", bg=BG, fg=GREEN, font=("Segoe UI", 11, "bold")).pack(side="left")
+        
+        active_row = tk.Frame(self._profile_tab_frame, bg=PANEL, padx=10, pady=8)
+        active_row.pack(fill="x", pady=(0, 10))
+        tk.Label(active_row, text="Perfil activo:", bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 9)).pack(side="left")
+        
+        self._active_teleport_var = tk.StringVar(value=self.config_data.get("active_teleport_profile", ""))
+        self._active_teleport_cb = ttk.Combobox(active_row, textvariable=self._active_teleport_var, state="readonly", width=24)
+        self._active_teleport_cb.pack(side="left", padx=(8, 4))
+        self._active_teleport_cb.bind("<<ComboboxSelected>>", lambda e: self._save_active_teleport())
+        
+        self._active_teleport_toggle_btn = tk.Button(active_row, font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2, cursor="hand2", command=self._toggle_teleport_enabled)
+        self._active_teleport_toggle_btn.pack(side="left")
+        
+        if "teleport_enabled" not in self.config_data:
+            self.config_data["teleport_enabled"] = bool(self.config_data.get("active_teleport_profile"))
+        self._update_teleport_toggle_btn()
+
+        editor_frame = tk.Frame(self._profile_tab_frame, bg=PANEL, padx=10, pady=8)
+        editor_frame.pack(fill="x")
+        tk.Label(editor_frame, text="Editor de Perfiles", bg=PANEL, fg=YELLOW, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
+        
+        sel_row = tk.Frame(editor_frame, bg=PANEL)
+        sel_row.pack(fill="x", pady=(0, 6))
+        tk.Label(sel_row, text="Editar:", bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 9)).pack(side="left")
+        self._edit_teleport_var = tk.StringVar()
+        self._edit_teleport_cb = ttk.Combobox(sel_row, textvariable=self._edit_teleport_var, state="readonly", width=24)
+        self._edit_teleport_cb.pack(side="left", padx=(8, 4))
+        self._edit_teleport_cb.bind("<<ComboboxSelected>>", lambda e: self._load_teleport_profile_to_editor())
+        
+        tk.Button(sel_row, text="Nuevo", bg=BLUE, fg=BG, font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2, cursor="hand2", command=self._new_teleport_profile).pack(side="left", padx=(0, 4))
+        tk.Button(sel_row, text="Eliminar", bg=RED, fg=TEXT, font=("Segoe UI", 8), relief="flat", padx=8, pady=2, cursor="hand2", command=self._delete_teleport_profile).pack(side="left")
+        
+        form = tk.Frame(editor_frame, bg=PANEL)
+        form.pack(fill="x", pady=6)
+        
+        self._tp_trigger_map_var = tk.StringVar()
+        self._tp_cell_id_var = tk.StringVar()
+        self._tp_dest_image_var = tk.StringVar()
+        self._tp_route_name_var = tk.StringVar()
+        self._tp_expected_map_var = tk.StringVar()
+        self._tp_farm_map_var = tk.StringVar()
+        self._tp_mobs_activate_var = tk.StringVar()
+        
+        fields = [
+            ("Map ID de activación:", self._tp_trigger_map_var, "Ej: 7411"),
+            ("Celda del Zaap/Objeto:", self._tp_cell_id_var, "Ej: 268"),
+            ("Imagen de Destino (sin .png):", self._tp_dest_image_var, "Ej: LaCuna"),
+            ("Ruta a cargar post-teleport:", self._tp_route_name_var, "Ej: FarmJalato"),
+            ("Map ID Esperado:", self._tp_expected_map_var, "Ej: 6954"),
+            ("Map ID Inicio Farmeo:", self._tp_farm_map_var, "Opc. Ej: 1234 (ignora mobs en camino)"),
+            ("Template IDs a Activar:", self._tp_mobs_activate_var, "Opc. Ej: 101,134"),
+        ]
+        
+        for label_text, str_var, hint in fields:
+            row = tk.Frame(form, bg=PANEL)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text=label_text, bg=PANEL, fg=TEXT, font=("Segoe UI", 9), width=24, anchor="w").pack(side="left")
+            if label_text.startswith("Ruta a cargar"):
+                cb = ttk.Combobox(row, textvariable=str_var, state="readonly", width=22)
+                cb.pack(side="left", padx=(0, 6))
+                self._tp_route_cb = cb
+            else:
+                tk.Entry(row, textvariable=str_var, bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat", font=("Segoe UI", 9), width=24).pack(side="left", padx=(0, 6))
+            tk.Label(row, text=hint, bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8, "italic")).pack(side="left")
+            
+        tk.Button(editor_frame, text="Guardar Perfil", bg=GREEN, fg=BG, font=("Segoe UI", 9, "bold"), relief="flat", padx=12, pady=4, cursor="hand2", command=self._save_teleport_profile_from_editor).pack(pady=(6, 0))
+        
+        self._refresh_teleport_profiles()
+
+    def _teleport_cfg(self):
+        return self.config_data.setdefault("teleport_profiles", {})
+
+    def _refresh_teleport_profiles(self):
+        profiles = self._teleport_cfg()
+        names = sorted(profiles.keys())
+        if not names:
+            profiles["Farm Jalato"] = {
+                "trigger_map": "7411",
+                "cell_id": "268",
+                "dest_image": "LaCuna",
+                "route_name": "FarmJalato",
+                "expected_map": "6954",
+                "farm_map": "",
+                "mobs_activate": ""
+            }
+            save_config(self.config_data)
+            names = ["Farm Jalato"]
+            
+        self._active_teleport_cb["values"] = names
+        self._edit_teleport_cb["values"] = names
+        
+        if self._edit_teleport_var.get() not in names:
+            self._edit_teleport_var.set(names[0] if names else "")
+            
+        if hasattr(self, "_tp_route_cb"):
+            self._tp_route_cb["values"] = sorted(self._route_profiles_cfg().keys())
+            
+        self._load_teleport_profile_to_editor()
+        
+    def _update_teleport_toggle_btn(self):
+        if self.config_data.get("teleport_enabled", False):
+            self._active_teleport_toggle_btn.config(text="Activado", bg=GREEN, fg=BG)
+        else:
+            self._active_teleport_toggle_btn.config(text="Desactivado", bg=RED, fg=TEXT)
+
+    def _toggle_teleport_enabled(self):
+        current = self.config_data.get("teleport_enabled", False)
+        self.config_data["teleport_enabled"] = not current
+        save_config(self.config_data)
+        self._sync_runtime_bot_config()
+        self._update_teleport_toggle_btn()
+        state = "Activado" if not current else "Desactivado"
+        self.log_queue.put(("log", f"[TELEPORT] Perfiles de teleport: {state}"))
+
+    def _save_active_teleport(self):
+        self.config_data["active_teleport_profile"] = self._active_teleport_var.get()
+        self.config_data["teleport_enabled"] = True
+        save_config(self.config_data)
+        self._sync_runtime_bot_config()
+        self._update_teleport_toggle_btn()
+        self.log_queue.put(("log", f"[TELEPORT] Perfil activo guardado: {self._active_teleport_var.get()}"))
+        
+    def _new_teleport_profile(self):
+        name = simpledialog.askstring("Nuevo Perfil", "Nombre del perfil:", parent=self)
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        profiles = self._teleport_cfg()
+        if name in profiles:
+            messagebox.showwarning("Perfil existente", "Ya existe un perfil con ese nombre.", parent=self)
+            return
+        profiles[name] = {
+            "trigger_map": "",
+            "cell_id": "",
+            "dest_image": "",
+            "route_name": "",
+            "expected_map": "",
+            "farm_map": "",
+            "mobs_activate": ""
+        }
+        self._edit_teleport_var.set(name)
+        self._refresh_teleport_profiles()
+
+    def _delete_teleport_profile(self):
+        name = self._edit_teleport_var.get()
+        if not name:
+            return
+        if messagebox.askyesno("Eliminar", f"¿Eliminar perfil '{name}'?", parent=self):
+            profiles = self._teleport_cfg()
+            profiles.pop(name, None)
+            if self.config_data.get("active_teleport_profile") == name:
+                self.config_data["active_teleport_profile"] = ""
+                self.config_data["teleport_enabled"] = False
+                self._active_teleport_var.set("")
+                self._update_teleport_toggle_btn()
+            save_config(self.config_data)
+            self._refresh_teleport_profiles()
+
+    def _load_teleport_profile_to_editor(self):
+        name = self._edit_teleport_var.get()
+        profile = self._teleport_cfg().get(name, {})
+        self._tp_trigger_map_var.set(str(profile.get("trigger_map", "")))
+        self._tp_cell_id_var.set(str(profile.get("cell_id", "")))
+        self._tp_dest_image_var.set(str(profile.get("dest_image", "")))
+        self._tp_route_name_var.set(str(profile.get("route_name", "")))
+        self._tp_expected_map_var.set(str(profile.get("expected_map", "")))
+        self._tp_farm_map_var.set(str(profile.get("farm_map", "")))
+        self._tp_mobs_activate_var.set(str(profile.get("mobs_activate", "")))
+        
+    def _save_teleport_profile_from_editor(self):
+        name = self._edit_teleport_var.get()
+        if not name:
+            return
+        profiles = self._teleport_cfg()
+        profiles[name] = {
+            "trigger_map": self._tp_trigger_map_var.get().strip(),
+            "cell_id": self._tp_cell_id_var.get().strip(),
+            "dest_image": self._tp_dest_image_var.get().strip(),
+            "route_name": self._tp_route_name_var.get().strip(),
+            "expected_map": self._tp_expected_map_var.get().strip(),
+            "farm_map": self._tp_farm_map_var.get().strip(),
+            "mobs_activate": self._tp_mobs_activate_var.get().strip(),
+        }
+        save_config(self.config_data)
+        self._sync_runtime_bot_config()
+        self.log_queue.put(("log", f"[TELEPORT] Perfil '{name}' guardado correctamente."))
+
     # ----------------------------------------------------------- Mobs --
     def _refresh_mobs(self):
         for w in self.mobs_frame.winfo_children():
             w.destroy()
         self.mob_vars.clear()
+        self.mob_ignore_vars.clear()
         self.mob_template_vars.clear()
         self.mob_images.clear()
 
@@ -1693,6 +2371,9 @@ class App(tk.Tk):
                                       bg=BG, fg=mode_color,
                                       font=("Segoe UI", 10, "bold"))
         self._mob_mode_lbl.pack(side="left")
+        tk.Button(mode_row, text="Desactivar todos", bg=RED, fg=BG,
+                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                  cursor="hand2", command=self._disable_all_mobs).pack(side="right", padx=(6, 0))
         btn_text = "Desactivar leveling" if is_leveling else "Activar leveling"
         btn_color = RED if is_leveling else GREEN
         tk.Button(mode_row, text=btn_text, bg=btn_color, fg=BG,
@@ -1727,145 +2408,41 @@ class App(tk.Tk):
         self._leveling_route_toggle_btn.pack(side="left", padx=(6, 0))
         self._update_leveling_route_toggle_button()
 
-        template_db_row = tk.Frame(self.mobs_frame, bg=BG)
-        template_db_row.pack(fill="x", padx=10, pady=(0, 6))
-        tk.Label(template_db_row, text="Base manual Template ID -> Nombre:", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
-        self._template_db_id_var = tk.StringVar()
-        self._template_db_name_var = tk.StringVar()
-        tk.Entry(template_db_row, textvariable=self._template_db_id_var, width=8,
-                 bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat",
-                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
-        tk.Entry(template_db_row, textvariable=self._template_db_name_var, width=18,
-                 bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat",
-                 font=("Segoe UI", 8)).pack(side="left", padx=(0, 4))
-        tk.Button(template_db_row, text="Guardar en base", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._save_template_db_entry).pack(side="left")
-        tk.Button(template_db_row, text="Refrescar", bg=ACCENT, fg=TEXT,
-                  font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._refresh_mobs).pack(side="left", padx=(4, 0))
+        settings_box = tk.Frame(self.mobs_frame, bg=PANEL, padx=10, pady=8)
+        settings_box.pack(fill="x", padx=10, pady=(0, 8))
+        settings_header = tk.Frame(settings_box, bg=PANEL)
+        settings_header.pack(fill="x")
+        tk.Label(settings_header, text="Ajustes de auto-nivel", bg=PANEL, fg=YELLOW,
+                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        search_entry = tk.Entry(settings_header, textvariable=self._mob_search_var, width=22,
+                                bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                                font=("Segoe UI", 8))
+        search_entry.pack(side="right", padx=(0, 4))
+        self._mob_search_entry = search_entry
+        tk.Button(settings_header, text="Limpiar", bg=BG, fg=TEXT,
+                  font=("Segoe UI", 7), relief="flat", padx=8, pady=1,
+                  cursor="hand2", command=self._clear_mob_search).pack(side="right", padx=(0, 4))
+        tk.Label(settings_header, text="Buscar:", bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).pack(side="right", padx=(0, 6))
 
-        player_db_row = tk.Frame(self.mobs_frame, bg=BG)
-        player_db_row.pack(fill="x", padx=10, pady=(0, 6))
-        tk.Label(player_db_row, text="Base manual Player Actor ID -> Nombre:", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
-        self._player_db_id_var = tk.StringVar()
-        self._player_db_name_var = tk.StringVar()
-        tk.Entry(player_db_row, textvariable=self._player_db_id_var, width=8,
-                 bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat",
-                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
-        tk.Entry(player_db_row, textvariable=self._player_db_name_var, width=18,
-                 bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat",
-                 font=("Segoe UI", 8)).pack(side="left", padx=(0, 4))
-        tk.Button(player_db_row, text="Guardar en base", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._save_player_db_entry).pack(side="left")
-
-        db_cfg = self.config_data.get("leveling", {}).get("template_id_db", {})
-        if db_cfg:
-            db_text = " | ".join(f"{k}:{v}" for k, v in sorted(db_cfg.items(), key=lambda item: int(item[0])))
+        veto_row = tk.Frame(settings_box, bg=PANEL)
+        veto_row.pack(fill="x", pady=(6, 0))
+        tk.Label(veto_row, text="Vetar IDs (ignorar grupo si contiene):", bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
+        
+        veto_raw = leveling_cfg.get("mob_group_veto_template_ids", [])
+        if isinstance(veto_raw, list):
+            veto_str = ",".join(str(v) for v in veto_raw)
         else:
-            db_text = "Sin registros manuales aún"
-        tk.Label(self.mobs_frame, text=db_text, bg=BG, fg=YELLOW,
-                 font=("Segoe UI", 8), justify="left", wraplength=420).pack(anchor="w", padx=10, pady=(0, 6))
+            veto_str = str(veto_raw)
+        self._mob_veto_template_ids_var = tk.StringVar(value=veto_str)
+        tk.Entry(veto_row, textvariable=self._mob_veto_template_ids_var, width=18, bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(6, 4))
+        tk.Button(veto_row, text="Guardar veto", bg=ACCENT, fg=TEXT, font=("Segoe UI", 7), relief="flat", padx=6, pady=1, cursor="hand2", command=self._save_mob_group_veto_template_ids).pack(side="left")
 
-        player_db_cfg = self.config_data.get("leveling", {}).get("follow_player_db", {})
-        if player_db_cfg:
-            player_db_text = " | ".join(f"{k}:{v}" for k, v in sorted(player_db_cfg.items(), key=lambda item: int(item[0])))
-        else:
-            player_db_text = "Sin players manuales aún"
-        tk.Label(self.mobs_frame, text=player_db_text, bg=BG, fg=GREEN,
-                 font=("Segoe UI", 8), justify="left", wraplength=420).pack(anchor="w", padx=10, pady=(0, 6))
-
-        # ── Posición propia del PJ (Sacrogito self-target) ───────────────
-        join_fight_row = tk.Frame(self.mobs_frame, bg=BG)
-        join_fight_row.pack(fill="x", padx=10, pady=(0, 6))
-        tk.Label(join_fight_row, text="Unirse a peleas de Player Actor ID:", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
-        self._join_external_fight_actor_var = tk.StringVar(value="")
-        self._join_external_fight_actor_combo = ttk.Combobox(
-            join_fight_row,
-            textvariable=self._join_external_fight_actor_var,
-            state="readonly",
-            width=26,
-            values=[],
-        )
-        self._join_external_fight_actor_combo.pack(side="left", padx=(6, 6))
-        self._join_external_fight_actor_combo.bind("<<ComboboxSelected>>", lambda _e: self._save_external_fight_join_settings())
-        self._join_external_fight_any_var = tk.BooleanVar(
-            value=bool(leveling_cfg.get("join_external_fights_any", False))
-        )
-        tk.Checkbutton(
-            join_fight_row,
-            text="Unirse a cualquier pelea",
-            variable=self._join_external_fight_any_var,
-            bg=BG,
-            activebackground=BG,
-            fg=GREEN,
-            selectcolor=BG,
-            font=("Segoe UI", 8, "bold"),
-            command=self._save_external_fight_join_settings,
-        ).pack(side="left", padx=(6, 0))
-        self._join_external_fight_status_var = tk.StringVar(value="")
-        tk.Label(self.mobs_frame, textvariable=self._join_external_fight_status_var, bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(anchor="w", padx=10, pady=(0, 6))
-        self._refresh_external_fight_join_controls()
-
-        pj_row = tk.Frame(self.mobs_frame, bg=BG)
-        pj_row.pack(fill="x", padx=10, pady=(2, 2))
-        tk.Label(pj_row, text="Posición PJ (self-target):", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
-        saved_pj = self.config_data["bot"].get("sacrogito_self_pos")
-        pj_text = f"{int(saved_pj[0])}, {int(saved_pj[1])}" if saved_pj else "No configurada"
-        self._sacro_pos_lbl = tk.Label(pj_row, text=pj_text, bg=BG, fg=GREEN,
-                                       font=("Segoe UI", 8, "bold"))
-        self._sacro_pos_lbl.pack(side="left", padx=(6, 0))
-        self._pj_visible_lbl = tk.Label(pj_row, text="—", bg=BG, fg=SUBTEXT,
-                                        font=("Segoe UI", 8, "bold"))
-        self._pj_visible_lbl.pack(side="left", padx=(8, 0))
-        tk.Button(pj_row, text="Capturar sprite PJ", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._capture_pj_sprite).pack(side="left", padx=(8, 0))
-        tk.Button(pj_row, text="Ver si visible", bg=BLUE, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._check_pj_visible).pack(side="left", padx=(4, 0))
-        tk.Button(pj_row, text="Localizar PJ.png", bg=YELLOW, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._locate_pj_sprite).pack(side="left", padx=(4, 0))
-        tk.Button(pj_row, text="Test click PJ", bg="#f07010", fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._test_pj_click).pack(side="left", padx=(4, 0))
-
-        pj_off_row = tk.Frame(self.mobs_frame, bg=BG)
-        pj_off_row.pack(fill="x", padx=10, pady=(2, 4))
-        tk.Label(pj_off_row, text="Offset click PJ (dx, dy):", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
-        tk.Label(pj_off_row, text="El click usa el match exacto de PJ.png", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8, "italic")).pack(side="left", padx=(6, 0))
-
-        # ── Offset del botón Atacar ──────────────────────────────────────
-        off_row = tk.Frame(self.mobs_frame, bg=BG)
-        off_row.pack(fill="x", padx=10, pady=(2, 4))
-        tk.Label(off_row, text="Offset Atacar (dx, dy):", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
-        cur_off = self.config_data.get("leveling", {}).get("attack_menu_offset", [-60, 30])
-        self._atk_off_x = tk.StringVar(value=str(cur_off[0]))
-        self._atk_off_y = tk.StringVar(value=str(cur_off[1]))
-        tk.Entry(off_row, textvariable=self._atk_off_x, width=5,
-                 bg=PANEL, fg=TEXT, insertbackground=TEXT).pack(side="left", padx=(6, 2))
-        tk.Entry(off_row, textvariable=self._atk_off_y, width=5,
-                 bg=PANEL, fg=TEXT, insertbackground=TEXT).pack(side="left", padx=(0, 6))
-        tk.Button(off_row, text="Guardar", bg=ACCENT, fg=TEXT,
-                  font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._save_attack_offset).pack(side="left")
-
-        tk.Label(self.mobs_frame,
-                 text="Configura Template IDs del sniffer por mob. Los sprites quedan como fallback visual para validar y clickear.",
-                 bg=BG, fg=SUBTEXT, font=("Segoe UI", 8),
-                 justify="left").pack(anchor="w", padx=10, pady=(0, 6))
 
         mobs = _list_mobs()
+        search_text = (self._mob_search_var.get() or "").strip().lower()
+        if search_text:
+            mobs = [mob_name for mob_name in mobs if search_text in mob_name.lower()]
         active_cfg = self.config_data.get("leveling", {}).get("mobs", {})
 
         if not mobs:
@@ -1875,89 +2452,113 @@ class App(tk.Tk):
             for mob_name in mobs:
                 mob_dir = os.path.join(MOBS_DIR, mob_name)
                 mob_data = active_cfg.get(mob_name, {})
+                self._mob_card_collapsed.setdefault(mob_name, True)
+                lf = tk.Frame(self.mobs_frame, bg=PANEL, bd=1, relief="groove")
+                lf.pack(fill="x", padx=10, pady=(4, 2))
 
-                lf = tk.LabelFrame(self.mobs_frame, text=f"  {mob_name}  ",
-                                   bg=PANEL, fg=YELLOW,
-                                   font=("Segoe UI", 9, "bold"), bd=1, relief="groove")
-                lf.pack(fill="x", padx=10, pady=(6, 2))
+                header = tk.Frame(lf, bg=PANEL, padx=8, pady=4)
+                header.pack(fill="x")
 
-                # ── Fila 1: Activo + Escanear en mapa + Chequear sprite ──
-                hrow = tk.Frame(lf, bg=PANEL)
-                hrow.pack(fill="x", padx=8, pady=(4, 2))
+                icon_photo = self._load_mob_icon_photo(mob_name)
+                icon_box = tk.Frame(header, bg=PANEL, width=42, height=42)
+                icon_box.pack(side="left")
+                icon_box.pack_propagate(False)
+                if icon_photo is not None:
+                    tk.Label(icon_box, image=icon_photo, bg=PANEL).pack(fill="both", expand=True)
+                else:
+                    tk.Label(icon_box, text="ICONO", bg=BG, fg=SUBTEXT,
+                             font=("Segoe UI", 7, "bold")).pack(fill="both", expand=True)
+
+                summary = tk.Frame(header, bg=PANEL)
+                summary.pack(side="left", fill="x", expand=True, padx=(8, 0))
+                template_text = ",".join(str(v) for v in mob_data.get("template_ids", []))
+                summary_text = (
+                    f"Ignorar={'SI' if mob_data.get('ignore', False) else 'NO'}"
+                    f" | IDs={template_text or '-'}"
+                )
+                tk.Label(summary, text=mob_name, bg=PANEL, fg=YELLOW,
+                         font=("Segoe UI", 9, "bold")).pack(anchor="w")
+                tk.Label(summary, text=summary_text, bg=PANEL, fg=SUBTEXT,
+                         font=("Segoe UI", 8)).pack(anchor="w", pady=(1, 0))
+
+                toggle_btn = tk.Button(
+                    header,
+                    text="▼" if not self._mob_card_collapsed.get(mob_name, True) else "▶",
+                    bg=PANEL,
+                    fg=TEXT,
+                    relief="flat",
+                    padx=6,
+                    pady=1,
+                    cursor="hand2",
+                    font=("Segoe UI", 9, "bold"),
+                    command=lambda n=mob_name: self._toggle_mob_card(n),
+                )
+                toggle_btn.pack(side="right")
+                
                 var = tk.BooleanVar(value=mob_data.get("enabled", True))
                 self.mob_vars[mob_name] = var
-                tk.Checkbutton(hrow, text="Activo", variable=var, bg=PANEL,
-                               activebackground=PANEL, fg=GREEN, selectcolor=PANEL,
-                               font=("Segoe UI", 9),
-                               command=self._update_mobs).pack(side="left")
+                tk.Checkbutton(
+                    header,
+                    text="Activo",
+                    variable=var,
+                    bg=PANEL,
+                    activebackground=PANEL,
+                    fg=GREEN,
+                    selectcolor=PANEL,
+                    font=("Segoe UI", 8, "bold"),
+                    command=self._update_mobs
+                ).pack(side="right", padx=(0, 8))
 
-                lbl_result = tk.Label(hrow, text="—", bg=PANEL, fg=SUBTEXT,
-                                      font=("Segoe UI", 8, "bold"))
-                lbl_result.pack(side="right", padx=(0, 4))
+                for widget in (header, summary, icon_box):
+                    widget.bind("<Button-1>", lambda _e, n=mob_name: self._toggle_mob_card(n))
 
-                tk.Button(hrow, text="Chequear sprite", bg=YELLOW, fg=BG,
-                          font=("Segoe UI", 7), relief="flat", padx=6, pady=2,
+                detail = tk.Frame(lf, bg=PANEL, padx=8, pady=4)
+                if not self._mob_card_collapsed.get(mob_name, True):
+                    detail.pack(fill="x")
+
+                ignore_var = tk.BooleanVar(value=bool(mob_data.get("ignore", False)))
+                self.mob_ignore_vars[mob_name] = ignore_var
+
+                row1 = tk.Frame(detail, bg=PANEL)
+                row1.pack(fill="x", pady=(0, 3))
+                tk.Checkbutton(row1, text="Ignorar", variable=ignore_var, bg=PANEL,
+                               activebackground=PANEL, fg=RED, selectcolor=PANEL,
+                               font=("Segoe UI", 8), command=self._update_mobs).pack(side="left")
+                lbl_result = tk.Label(row1, text="—", bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8, "bold"))
+                lbl_result.pack(side="right")
+                tk.Button(row1, text="Chequear", bg=YELLOW, fg=BG,
+                          font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
                           cursor="hand2",
-                          command=lambda n=mob_name, lbl=lbl_result: self._check_mob(n, lbl)
-                          ).pack(side="right", padx=(0, 4))
-
-                tk.Button(hrow, text="Escanear en mapa", bg="#f07010", fg=BG,
-                          font=("Segoe UI", 7), relief="flat", padx=6, pady=2,
+                          command=lambda n=mob_name, lbl=lbl_result: self._check_mob(n, lbl)).pack(side="right", padx=(4, 0))
+                tk.Button(row1, text="Escanear", bg="#f07010", fg=BG,
+                          font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
                           cursor="hand2",
-                          command=lambda n=mob_name, lbl=lbl_result: self._scan_mob_on_map(n, lbl)
-                          ).pack(side="right", padx=(0, 4))
+                          command=lambda n=mob_name, lbl=lbl_result: self._scan_mob_on_map(n, lbl)).pack(side="right", padx=(4, 0))
 
-                template_row = tk.Frame(lf, bg=PANEL)
-                template_row.pack(fill="x", padx=8, pady=(0, 2))
-                tk.Label(template_row, text="Template IDs:", bg=PANEL, fg=SUBTEXT,
+                row2 = tk.Frame(detail, bg=PANEL)
+                row2.pack(fill="x", pady=(0, 3))
+                tk.Label(row2, text="Template IDs:", bg=PANEL, fg=SUBTEXT,
                          font=("Segoe UI", 8)).pack(side="left")
-                template_text = ",".join(str(v) for v in mob_data.get("template_ids", []))
                 template_var = tk.StringVar(value=template_text)
                 self.mob_template_vars[mob_name] = template_var
-                tk.Entry(template_row, textvariable=template_var, width=22,
+                tk.Entry(row2, textvariable=template_var, width=18,
                          bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
-                         font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
-                tk.Button(template_row, text="Guardar IDs", bg=ACCENT, fg=TEXT,
+                         font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
+                tk.Button(row2, text="Guardar IDs", bg=ACCENT, fg=TEXT,
                           font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
                           cursor="hand2",
                           command=lambda n=mob_name: self._save_mob_template_ids(n)).pack(side="left")
-                tk.Label(template_row, text="Ej: 112,115", bg=PANEL, fg=SUBTEXT,
-                         font=("Segoe UI", 8, "italic")).pack(side="left", padx=(6, 0))
+                tk.Label(row2, text="Ej: 112,115", bg=PANEL, fg=SUBTEXT,
+                         font=("Segoe UI", 7, "italic")).pack(side="left", padx=(6, 0))
 
-                # ── Fila 2: Sprites (fallback visual) ──────────
-                sprites_row = tk.Frame(lf, bg=PANEL)
-                sprites_row.pack(fill="x", padx=8, pady=(2, 2))
-                pngs = sorted(f for f in os.listdir(mob_dir) if f.lower().endswith(".png"))
-                for png in pngs:
-                    sprite_name = os.path.splitext(png)[0]
-                    key = (mob_name, sprite_name)
-                    try:
-                        img = Image.open(os.path.join(mob_dir, png))
-                        img.thumbnail((40, 40), Image.LANCZOS)
-                        photo = ImageTk.PhotoImage(img)
-                        self.mob_images[key] = photo
-                        cell = tk.Frame(sprites_row, bg=PANEL)
-                        cell.pack(side="left", padx=3)
-                        tk.Label(cell, image=photo, bg=PANEL).pack()
-                        tk.Label(cell, text=sprite_name, bg=PANEL, fg=SUBTEXT,
-                                 font=("Segoe UI", 7)).pack()
-                    except Exception:
-                        tk.Label(sprites_row, text=sprite_name, bg=PANEL, fg=TEXT,
-                                 font=("Segoe UI", 8)).pack(side="left", padx=3)
-
-                if not pngs:
-                    tk.Label(sprites_row, text="Sin sprites — captura al menos una orientación",
-                             bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left", padx=4)
-
-                # ── Fila 3: Capturar sprite + Eliminar mob ────────────────
-                add_row = tk.Frame(lf, bg=PANEL)
-                add_row.pack(fill="x", padx=8, pady=(2, 6))
-                tk.Button(add_row, text="+ Capturar orientación", bg=BLUE, fg=BG,
-                          font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                row3 = tk.Frame(detail, bg=PANEL)
+                row3.pack(fill="x")
+                tk.Button(row3, text="Capturar ICONO", bg=BLUE, fg=BG,
+                          font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
                           cursor="hand2",
-                          command=lambda n=mob_name: self._open_capture_sprite(n)).pack(side="left")
-                tk.Button(add_row, text="Eliminar mob", bg=RED, fg=BG,
-                          font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                          command=lambda n=mob_name: self._open_capture_mob_icon(n)).pack(side="left")
+                tk.Button(row3, text="Eliminar mob", bg=RED, fg=BG,
+                          font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
                           cursor="hand2",
                           command=lambda n=mob_name: self._delete_mob(n)).pack(side="right")
 
@@ -1967,6 +2568,306 @@ class App(tk.Tk):
         tk.Button(new_row, text="+ Nuevo mob", bg=ACCENT, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=3,
                   cursor="hand2", command=self._new_mob).pack(side="left")
+
+    def _refresh_database_tab(self):
+        if self._database_frame is None:
+            return
+        for w in self._database_frame.winfo_children():
+            w.destroy()
+
+        top = tk.Frame(self._database_frame, bg=BG)
+        top.pack(fill="x", padx=10, pady=(8, 6))
+        tk.Label(top, text="Base de datos", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        tk.Label(
+            top,
+            text="Gestiona aquí las bases manuales de Template ID -> Mob y Actor ID -> Player.",
+            bg=BG,
+            fg=SUBTEXT,
+            font=("Segoe UI", 8),
+            justify="left",
+        ).pack(anchor="w", pady=(2, 0))
+
+        mobs_box = tk.Frame(self._database_frame, bg=PANEL, padx=10, pady=8)
+        mobs_box.pack(fill="x", padx=10, pady=(0, 8))
+        mobs_header = tk.Frame(mobs_box, bg=PANEL)
+        mobs_header.pack(fill="x")
+        tk.Label(mobs_header, text="DB mobs por Template ID", bg=PANEL, fg=YELLOW,
+                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Button(mobs_header, text="Buscar nombre", bg=BLUE, fg=BG,
+                  font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
+                  cursor="hand2", command=self._prompt_mob_db_name_search).pack(side="right")
+        tk.Button(mobs_header, text="Limpiar", bg=BG, fg=TEXT,
+                  font=("Segoe UI", 7), relief="flat", padx=8, pady=1,
+                  cursor="hand2", command=self._reset_mob_db_filters).pack(side="right", padx=(0, 4))
+        mobs_form = tk.Frame(mobs_box, bg=PANEL)
+        mobs_form.pack(fill="x", pady=(6, 6))
+        self._template_db_id_var = tk.StringVar()
+        self._template_db_name_var = tk.StringVar()
+        tk.Label(mobs_form, text="Template ID:", bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).pack(side="left")
+        tk.Entry(mobs_form, textvariable=self._template_db_id_var, width=10,
+                 bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
+        tk.Label(mobs_form, text="Nombre:", bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).pack(side="left", padx=(4, 0))
+        tk.Entry(mobs_form, textvariable=self._template_db_name_var, width=22,
+                 bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
+        tk.Button(mobs_form, text="Guardar en base", bg=GREEN, fg=BG,
+                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
+                  cursor="hand2", command=self._save_template_db_entry).pack(side="left")
+        tk.Button(mobs_form, text="Refrescar", bg=ACCENT, fg=TEXT,
+                  font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
+                  cursor="hand2", command=self._refresh_database_tab).pack(side="left", padx=(4, 0))
+        mobs_text_frame = tk.Frame(mobs_box, bg=PANEL)
+        mobs_text_frame.pack(fill="both", expand=True)
+        mobs_tree = ttk.Treeview(mobs_text_frame, columns=("id", "name"), show="headings", height=8)
+        self._mob_db_tree = mobs_tree
+        id_heading = self._database_heading_text("Template ID", self._mob_db_filter_id_var.get())
+        name_heading = self._database_heading_text("Nombre", self._mob_db_filter_name_var.get(), self._mob_db_search_name_var.get())
+        mobs_tree.heading("id", text=id_heading, command=self._open_mob_db_id_menu)
+        mobs_tree.heading("name", text=name_heading, command=self._open_mob_db_name_menu)
+        mobs_tree.column("id", width=110, anchor="w")
+        mobs_tree.column("name", width=320, anchor="w")
+        mobs_scroll = ttk.Scrollbar(mobs_text_frame, command=mobs_tree.yview)
+        mobs_tree.configure(yscrollcommand=mobs_scroll.set)
+        mobs_scroll.pack(side="right", fill="y")
+        mobs_tree.pack(side="left", fill="both", expand=True)
+        template_db = self._filtered_template_db_items()
+        if template_db:
+            for template_id, name in template_db:
+                mobs_tree.insert("", "end", values=(template_id, name))
+        else:
+            mobs_tree.insert("", "end", values=("-", "Sin registros manuales aún."))
+
+        players_box = tk.Frame(self._database_frame, bg=PANEL, padx=10, pady=8)
+        players_box.pack(fill="x", padx=10, pady=(0, 8))
+        players_header = tk.Frame(players_box, bg=PANEL)
+        players_header.pack(fill="x")
+        tk.Label(players_header, text="DB players por Actor ID", bg=PANEL, fg=GREEN,
+                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Button(players_header, text="Buscar nombre", bg=BLUE, fg=BG,
+                  font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
+                  cursor="hand2", command=self._prompt_player_db_name_search).pack(side="right")
+        tk.Button(players_header, text="Limpiar", bg=BG, fg=TEXT,
+                  font=("Segoe UI", 7), relief="flat", padx=8, pady=1,
+                  cursor="hand2", command=self._reset_player_db_filters).pack(side="right", padx=(0, 4))
+        players_form = tk.Frame(players_box, bg=PANEL)
+        players_form.pack(fill="x", pady=(6, 6))
+        self._player_db_id_var = tk.StringVar()
+        self._player_db_name_var = tk.StringVar()
+        tk.Label(players_form, text="Actor ID:", bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).pack(side="left")
+        tk.Entry(players_form, textvariable=self._player_db_id_var, width=10,
+                 bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
+        tk.Label(players_form, text="Nombre:", bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).pack(side="left", padx=(4, 0))
+        tk.Entry(players_form, textvariable=self._player_db_name_var, width=22,
+                 bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
+        tk.Button(players_form, text="Guardar en base", bg=GREEN, fg=BG,
+                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
+                  cursor="hand2", command=self._save_player_db_entry).pack(side="left")
+        tk.Button(players_form, text="Refrescar", bg=ACCENT, fg=TEXT,
+                  font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
+                  cursor="hand2", command=self._refresh_database_tab).pack(side="left", padx=(4, 0))
+        players_text_frame = tk.Frame(players_box, bg=PANEL)
+        players_text_frame.pack(fill="both", expand=True)
+        players_tree = ttk.Treeview(players_text_frame, columns=("id", "name", "state"), show="headings", height=8)
+        self._player_db_tree = players_tree
+        actor_heading = self._database_heading_text("Actor ID", self._player_db_filter_id_var.get())
+        player_name_heading = self._database_heading_text("Nombre", self._player_db_filter_name_var.get(), self._player_db_search_name_var.get())
+        players_tree.heading("id", text=actor_heading, command=self._open_player_db_id_menu)
+        players_tree.heading("name", text=player_name_heading, command=self._open_player_db_name_menu)
+        players_tree.heading("state", text="Estado")
+        players_tree.column("id", width=110, anchor="w")
+        players_tree.column("name", width=260, anchor="w")
+        players_tree.column("state", width=90, anchor="w")
+        players_scroll = ttk.Scrollbar(players_text_frame, command=players_tree.yview)
+        players_tree.configure(yscrollcommand=players_scroll.set)
+        players_scroll.pack(side="right", fill="y")
+        players_tree.pack(side="left", fill="both", expand=True)
+        player_db = self._filtered_player_db_items()
+        if player_db:
+            for actor_id, payload in player_db:
+                state = "ON" if payload.get("enabled", True) else "OFF"
+                players_tree.insert("", "end", values=(actor_id, payload.get("name", ""), state))
+        else:
+            players_tree.insert("", "end", values=("-", "Sin players manuales aún.", "-"))
+
+    def _filtered_template_db_items(self):
+        items = self._template_db_items_sorted_by_id()
+        selected_id = self._mob_db_filter_id_var.get()
+        selected_name = self._mob_db_filter_name_var.get()
+        if selected_id and selected_id != "Todos":
+            items = [item for item in items if item[0] == selected_id]
+        if selected_name and selected_name != "Todos":
+            items = [item for item in items if item[1] == selected_name]
+        sort_mode = self._mob_db_sort_var.get()
+        if sort_mode == "ID desc":
+            items.sort(key=lambda item: int(item[0]), reverse=True)
+        elif sort_mode == "Nombre A-Z":
+            items.sort(key=lambda item: (item[1].lower(), int(item[0])))
+        elif sort_mode == "Nombre Z-A":
+            items.sort(key=lambda item: (item[1].lower(), int(item[0])), reverse=True)
+        else:
+            items.sort(key=lambda item: int(item[0]))
+        search_name = (self._mob_db_search_name_var.get() or "").strip().lower()
+        if search_name:
+            items = [item for item in items if search_name in item[1].lower()]
+        return items
+
+    def _filtered_player_db_items(self):
+        items = self._player_db_items_sorted_by_id()
+        selected_id = self._player_db_filter_id_var.get()
+        selected_name = self._player_db_filter_name_var.get()
+        if selected_id and selected_id != "Todos":
+            items = [item for item in items if item[0] == selected_id]
+        if selected_name and selected_name != "Todos":
+            items = [item for item in items if str(item[1].get("name", "")) == selected_name]
+        sort_mode = self._player_db_sort_var.get()
+        if sort_mode == "ID desc":
+            items.sort(key=lambda item: int(item[0]), reverse=True)
+        elif sort_mode == "Nombre A-Z":
+            items.sort(key=lambda item: (str(item[1].get("name", "")).lower(), int(item[0])))
+        elif sort_mode == "Nombre Z-A":
+            items.sort(key=lambda item: (str(item[1].get("name", "")).lower(), int(item[0])), reverse=True)
+        else:
+            items.sort(key=lambda item: int(item[0]))
+        search_name = (self._player_db_search_name_var.get() or "").strip().lower()
+        if search_name:
+            items = [item for item in items if search_name in str(item[1].get("name", "")).lower()]
+        return items
+
+    def _template_db_items_sorted_by_id(self):
+        template_db = self.config_data.get("leveling", {}).get("template_id_db", {})
+        return sorted(
+            [(str(template_id), str(name)) for template_id, name in template_db.items()],
+            key=lambda item: int(item[0]),
+        )
+
+    def _player_db_items_sorted_by_id(self):
+        player_db = self._normalized_follow_player_db()
+        return sorted(
+            [(str(actor_id), payload) for actor_id, payload in player_db.items()],
+            key=lambda item: int(item[0]),
+        )
+
+    def _reset_mob_db_filters(self):
+        self._mob_db_filter_id_var.set("Todos")
+        self._mob_db_filter_name_var.set("Todos")
+        self._mob_db_search_name_var.set("")
+        self._mob_db_sort_var.set("ID asc")
+        self._refresh_database_tab()
+
+    def _reset_player_db_filters(self):
+        self._player_db_filter_id_var.set("Todos")
+        self._player_db_filter_name_var.set("Todos")
+        self._player_db_search_name_var.set("")
+        self._player_db_sort_var.set("ID asc")
+        self._refresh_database_tab()
+
+    def _database_heading_text(self, base: str, selected_filter: str, search_text: str = "") -> str:
+        suffix = ""
+        if selected_filter and selected_filter != "Todos":
+            suffix = f" [{selected_filter}]"
+        elif search_text:
+            suffix = " [buscar]"
+        return f"{base}{suffix} ▼"
+
+    def _post_database_menu(self, commands):
+        menu = tk.Menu(self, tearoff=False, bg=BG, fg=TEXT, activebackground=ACCENT, activeforeground=TEXT)
+        for item in commands:
+            if item is None:
+                menu.add_separator()
+            else:
+                label, callback = item
+                menu.add_command(label=label, command=callback)
+        menu.post(self.winfo_pointerx(), self.winfo_pointery())
+
+    def _open_mob_db_id_menu(self):
+        items = [template_id for template_id, _name in self._template_db_items_sorted_by_id()]
+        commands = [("Todos", lambda: self._set_mob_db_filter_id("Todos")), None]
+        commands.extend((template_id, lambda value=template_id: self._set_mob_db_filter_id(value)) for template_id in items)
+        commands.extend([
+            None,
+            ("Ordenar ID asc", lambda: self._set_mob_db_sort("ID asc")),
+            ("Ordenar ID desc", lambda: self._set_mob_db_sort("ID desc")),
+        ])
+        self._post_database_menu(commands)
+
+    def _open_mob_db_name_menu(self):
+        names = sorted({name for _template_id, name in self._template_db_items_sorted_by_id()}, key=str.lower)
+        commands = [("Todos", lambda: self._set_mob_db_filter_name("Todos")), None]
+        commands.extend((name, lambda value=name: self._set_mob_db_filter_name(value)) for name in names)
+        commands.extend([
+            None,
+            ("Ordenar Nombre A-Z", lambda: self._set_mob_db_sort("Nombre A-Z")),
+            ("Ordenar Nombre Z-A", lambda: self._set_mob_db_sort("Nombre Z-A")),
+        ])
+        self._post_database_menu(commands)
+
+    def _open_player_db_id_menu(self):
+        items = [actor_id for actor_id, _payload in self._player_db_items_sorted_by_id()]
+        commands = [("Todos", lambda: self._set_player_db_filter_id("Todos")), None]
+        commands.extend((actor_id, lambda value=actor_id: self._set_player_db_filter_id(value)) for actor_id in items)
+        commands.extend([
+            None,
+            ("Ordenar ID asc", lambda: self._set_player_db_sort("ID asc")),
+            ("Ordenar ID desc", lambda: self._set_player_db_sort("ID desc")),
+        ])
+        self._post_database_menu(commands)
+
+    def _open_player_db_name_menu(self):
+        names = sorted({str(payload.get("name", "")) for _actor_id, payload in self._player_db_items_sorted_by_id()}, key=str.lower)
+        commands = [("Todos", lambda: self._set_player_db_filter_name("Todos")), None]
+        commands.extend((name, lambda value=name: self._set_player_db_filter_name(value)) for name in names)
+        commands.extend([
+            None,
+            ("Ordenar Nombre A-Z", lambda: self._set_player_db_sort("Nombre A-Z")),
+            ("Ordenar Nombre Z-A", lambda: self._set_player_db_sort("Nombre Z-A")),
+        ])
+        self._post_database_menu(commands)
+
+    def _set_mob_db_filter_id(self, value: str):
+        self._mob_db_filter_id_var.set(value)
+        self._refresh_database_tab()
+
+    def _set_mob_db_filter_name(self, value: str):
+        self._mob_db_filter_name_var.set(value)
+        self._refresh_database_tab()
+
+    def _set_mob_db_sort(self, value: str):
+        self._mob_db_sort_var.set(value)
+        self._refresh_database_tab()
+
+    def _set_player_db_filter_id(self, value: str):
+        self._player_db_filter_id_var.set(value)
+        self._refresh_database_tab()
+
+    def _set_player_db_filter_name(self, value: str):
+        self._player_db_filter_name_var.set(value)
+        self._refresh_database_tab()
+
+    def _set_player_db_sort(self, value: str):
+        self._player_db_sort_var.set(value)
+        self._refresh_database_tab()
+
+    def _prompt_mob_db_name_search(self):
+        value = simpledialog.askstring("Buscar mob", "Buscar nombre de mob:", parent=self, initialvalue=self._mob_db_search_name_var.get())
+        if value is None:
+            return
+        self._mob_db_search_name_var.set(value.strip())
+        self._refresh_database_tab()
+
+    def _prompt_player_db_name_search(self):
+        value = simpledialog.askstring("Buscar player", "Buscar nombre de player:", parent=self, initialvalue=self._player_db_search_name_var.get())
+        if value is None:
+            return
+        self._player_db_search_name_var.set(value.strip())
+        self._refresh_database_tab()
 
     def _locate_pj_sprite(self):
         """Busca PJ.png en la tarjeta UI y guarda la posición detectada."""
@@ -2464,6 +3365,58 @@ class App(tk.Tk):
 
         ResourceCaptureWindow(self, monitor, on_saved, save_dir=save_dir)
 
+    def _mob_icon_path(self, mob_name: str) -> str:
+        return os.path.join(MOBS_DIR, mob_name, "_icon.png")
+
+    def _load_mob_icon_photo(self, mob_name: str):
+        icon_path = self._mob_icon_path(mob_name)
+        if not os.path.exists(icon_path):
+            return None
+        key = (mob_name, "_icon")
+        try:
+            img = Image.open(icon_path)
+            img.thumbnail((40, 40), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self.mob_images[key] = photo
+            return photo
+        except Exception:
+            return None
+
+    def _toggle_mob_card(self, mob_name: str):
+        current = bool(self._mob_card_collapsed.get(mob_name, True))
+        self._mob_card_collapsed[mob_name] = not current
+        self._refresh_mobs()
+
+    def _on_mob_search_changed(self, *_args):
+        if self.mobs_frame is None or not self.mobs_frame.winfo_exists():
+            return
+        self.after_idle(self._refresh_mobs_preserving_search_focus)
+
+    def _refresh_mobs_preserving_search_focus(self):
+        search_text = self._mob_search_var.get() or ""
+        self._refresh_mobs()
+        if self._mob_search_entry is not None and self._mob_search_entry.winfo_exists():
+            try:
+                self._mob_search_entry.focus_set()
+                self._mob_search_entry.icursor(len(search_text))
+            except Exception:
+                pass
+
+    def _clear_mob_search(self):
+        self._mob_search_var.set("")
+
+    def _open_capture_mob_icon(self, mob_name: str):
+        save_dir = os.path.join(MOBS_DIR, mob_name)
+        os.makedirs(save_dir, exist_ok=True)
+        monitor = self.config_data["game"].get("monitor", 2)
+
+        def on_saved(_name):
+            self.config_data = load_config()
+            self._sync_runtime_bot_config()
+            self._refresh_mobs()
+
+        _MobIconCaptureWindow(self, monitor, on_saved, save_dir=save_dir)
+
     def _check_mob(self, mob_name: str, lbl: tk.Label):
         lbl.config(text="...", fg=YELLOW)
         self.update_idletasks()
@@ -2492,12 +3445,32 @@ class App(tk.Tk):
             if mob_name not in mobs:
                 mobs[mob_name] = {}
             mobs[mob_name]["enabled"] = var.get()
+        for mob_name, var in self.mob_ignore_vars.items():
+            if mob_name not in mobs:
+                mobs[mob_name] = {}
+            mobs[mob_name]["ignore"] = bool(var.get())
         save_config(self.config_data)
         self._sync_runtime_bot_config()
         if self.bot_thread and self.bot_thread.bot:
             self.bot_thread.bot.mob_pending = []
             if self.bot_thread.bot.state == "click_mob":
                 self.bot_thread.bot.state = "scan_mobs"
+
+    def _disable_all_mobs(self):
+        lev = self.config_data.setdefault("leveling", {})
+        mobs = lev.setdefault("mobs", {})
+        for mob_name in _list_mobs():
+            mob_cfg = mobs.setdefault(mob_name, {})
+            mob_cfg["enabled"] = False
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        if self.bot_thread and self.bot_thread.bot:
+            self.bot_thread.bot.mob_pending = []
+            if self.bot_thread.bot.state == "click_mob":
+                self.bot_thread.bot.state = "scan_mobs"
+        self.log_queue.put(("log", "[MOBS] Todos los mobs quedaron desactivados"))
+        self._refresh_mobs()
 
     def _save_mob_template_ids(self, mob_name: str):
         raw = (self.mob_template_vars.get(mob_name).get() if mob_name in self.mob_template_vars else "").strip()
@@ -2524,6 +3497,40 @@ class App(tk.Tk):
         self.config_data = load_config()
         self._sync_runtime_bot_config()
         self.log_queue.put(("log", f"[MOBS] {mob_name} template_ids guardados: {values or '[]'}"))
+    def _save_mob_group_veto_template_ids(self):
+        raw = (self._mob_veto_template_ids_var.get() if hasattr(self, "_mob_veto_template_ids_var") else "").strip()
+        values: list[int] = []
+        if raw:
+            for token in raw.split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    values.append(int(token))
+                except ValueError:
+                    messagebox.showwarning(
+                        "Template ID inv?lido",
+                        f"'{token}' no es un entero v?lido. Usa Template IDs separados por coma.",
+                        parent=self,
+                    )
+                    return
+        leveling_cfg = self.config_data.setdefault("leveling", {})
+        leveling_cfg["mob_group_veto_template_ids"] = values
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        rendered = ", ".join(str(v) for v in values) if values else "(vac?o)"
+        self.log_queue.put(("log", f"[MOBS] veto de grupos por template_id guardado: {rendered}"))
+
+    def _save_ignore_single_mob_groups(self):
+        leveling_cfg = self.config_data.setdefault("leveling", {})
+        enabled = bool(self._ignore_single_mob_groups_var.get()) if hasattr(self, "_ignore_single_mob_groups_var") else False
+        leveling_cfg["ignore_single_mob_groups"] = enabled
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        state = "activo" if enabled else "inactivo"
+        self.log_queue.put(("log", f"[MOBS] ignorar grupos de 1 mob: {state}"))
 
     def _save_template_db_entry(self):
         raw_id = (self._template_db_id_var.get() or "").strip()
@@ -2551,6 +3558,7 @@ class App(tk.Tk):
         self.config_data = load_config()
         self._sync_runtime_bot_config()
         self.log_queue.put(("log", f"[MOBS] template_id_db guardado: {template_id} -> {raw_name}"))
+        self._refresh_database_tab()
 
     def _save_player_db_entry(self):
         raw_id = (self._player_db_id_var.get() or "").strip()
@@ -2591,8 +3599,66 @@ class App(tk.Tk):
         self._refresh_follow_player_controls(preferred_actor_id=str(actor_id))
         self._refresh_external_fight_join_controls()
         self.log_queue.put(("log", f"[PLAYERS] follow_player_db guardado: {actor_id} -> {raw_name}"))
+        self._refresh_database_tab()
         self._refresh_mobs()
         self._refresh_mobs()
+
+    def _open_leveling_db_view(self):
+        win = tk.Toplevel(self)
+        win.title("Auto-nivel - Bases manuales")
+        win.configure(bg=BG)
+        win.geometry("760x520")
+
+        tk.Label(
+            win,
+            text="Bases manuales de mobs y players usadas por auto-nivel.",
+            bg=BG,
+            fg=SUBTEXT,
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=10, pady=(8, 4))
+
+        body = tk.Frame(win, bg=BG, padx=10, pady=6)
+        body.pack(fill="both", expand=True)
+
+        left = tk.Frame(body, bg=BG)
+        left.pack(side="left", fill="both", expand=True)
+        right = tk.Frame(body, bg=BG)
+        right.pack(side="left", fill="both", expand=True, padx=(10, 0))
+
+        tk.Label(left, text="DB mobs por Template ID", bg=BG, fg=YELLOW,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        mobs_text = tk.Text(left, bg=PANEL, fg=TEXT, font=("Consolas", 8),
+                            relief="flat", wrap="word", state="normal")
+        mobs_scroll = ttk.Scrollbar(left, command=mobs_text.yview)
+        mobs_text.configure(yscrollcommand=mobs_scroll.set)
+        mobs_scroll.pack(side="right", fill="y", pady=(4, 0))
+        mobs_text.pack(side="left", fill="both", expand=True, pady=(4, 0))
+
+        template_db = self.config_data.get("leveling", {}).get("template_id_db", {})
+        if template_db:
+            for template_id, name in sorted(template_db.items(), key=lambda item: int(item[0])):
+                mobs_text.insert("end", f"{template_id} -> {name}\n")
+        else:
+            mobs_text.insert("end", "Sin registros manuales aún.\n")
+        mobs_text.config(state="disabled")
+
+        tk.Label(right, text="DB players por Actor ID", bg=BG, fg=GREEN,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        players_text = tk.Text(right, bg=PANEL, fg=TEXT, font=("Consolas", 8),
+                               relief="flat", wrap="word", state="normal")
+        players_scroll = ttk.Scrollbar(right, command=players_text.yview)
+        players_text.configure(yscrollcommand=players_scroll.set)
+        players_scroll.pack(side="right", fill="y", pady=(4, 0))
+        players_text.pack(side="left", fill="both", expand=True, pady=(4, 0))
+
+        player_db = self._normalized_follow_player_db()
+        if player_db:
+            for actor_id, payload in sorted(player_db.items(), key=lambda item: int(item[0])):
+                state = "ON" if payload.get("enabled", True) else "OFF"
+                players_text.insert("end", f"{actor_id} -> {payload.get('name', '')} [{state}]\n")
+        else:
+            players_text.insert("end", "Sin players manuales aún.\n")
+        players_text.config(state="disabled")
 
     def _save_map_origin_by_map_id(self, map_id: int, origin: dict):
         bot_cfg = self.config_data.setdefault("bot", {})
@@ -3200,7 +4266,7 @@ class App(tk.Tk):
             except (TypeError, ValueError):
                 selected_cell = None
         if map_cells:
-            iterable_cells = sorted(map_cells, key=lambda item: int(item.get("cell_id", 0)))
+            iterable_cells = sorted(map_cells, key=lambda item: int(item.get("cell_id") if item.get("cell_id") is not None else 0))
         else:
             iterable_cells = []
             cell_id = 0
@@ -3397,6 +4463,22 @@ class App(tk.Tk):
         self.config_data = load_config()
         self._sync_runtime_bot_config()
 
+    def _save_bank_unload_setting(self):
+        self.config_data["bot"]["enable_bank_unload"] = self._enable_bank_unload_var.get()
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        state = "activada" if self._enable_bank_unload_var.get() else "desactivada"
+        self.log_queue.put(("log", f"[BOT] Descarga en banco automática {state}"))
+
+    def _save_combat_manual_mode_setting(self):
+        self.config_data.setdefault("bot", {})["combat_manual_mode"] = self._combat_manual_mode_var.get()
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        state = "activado" if self._combat_manual_mode_var.get() else "desactivado"
+        self.log_queue.put(("log", f"[BOT] Modo manual en combate {state}"))
+
     def _toggle_sniffer_debug(self):
         """Abre ventana con log raw de paquetes Dofus para descubrir actor_id."""
         win = tk.Toplevel(self)
@@ -3449,47 +4531,51 @@ class App(tk.Tk):
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(4, 0))
         action_row = tk.Frame(top, bg=BG)
         action_row.pack(fill="x", pady=(6, 0))
+        action_row_1 = tk.Frame(action_row, bg=BG)
+        action_row_1.pack(fill="x")
+        action_row_2 = tk.Frame(action_row, bg=BG)
+        action_row_2.pack(fill="x", pady=(6, 0))
         self._sniffer_copy_status_var = tk.StringVar(value="")
         self._sniffer_test_status_var = tk.StringVar(value="")
-        tk.Button(action_row, text="Copiar todo", bg=GREEN, fg=BG,
+        tk.Button(action_row_1, text="Copiar todo", bg=GREEN, fg=BG,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2",
                   command=lambda: self._copy_sniffer_snapshot(self._sniffer_payload_text, self._sniffer_copy_status_var)
                   ).pack(side="left")
-        tk.Button(action_row, text="Guardar player ID", bg=ACCENT, fg=TEXT,
+        tk.Button(action_row_1, text="Guardar player ID", bg=ACCENT, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._save_selected_follow_player_id).pack(side="left", padx=(6, 0))
-        tk.Button(action_row, text="Quitar player ID", bg=RED, fg=TEXT,
+        tk.Button(action_row_1, text="Quitar player ID", bg=RED, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._remove_selected_follow_player_id).pack(side="left", padx=(6, 0))
-        tk.Button(action_row, text="Guardar punto manual (3s)", bg=BLUE, fg=BG,
+        tk.Button(action_row_1, text="Guardar punto manual (3s)", bg=BLUE, fg=BG,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2",
                   command=lambda: self._start_sniffer_map_calibration(self._sniffer_selection_entry, self._sniffer_test_status_var)
                   ).pack(side="left", padx=(6, 0))
-        tk.Button(action_row, text="Mover mouse a selección", bg=YELLOW, fg=BG,
+        tk.Button(action_row_2, text="Mover mouse a selección", bg=YELLOW, fg=BG,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2",
                   command=lambda: self._move_mouse_to_sniffer_selection(self._sniffer_selection_entry, self._sniffer_test_status_var)
                   ).pack(side="left", padx=(6, 0))
-        tk.Button(action_row, text="Anclar offset (3s)", bg=ACCENT, fg=TEXT,
+        tk.Button(action_row_2, text="Anclar offset (3s)", bg=ACCENT, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2",
                   command=lambda: self._start_visual_grid_anchor(self._sniffer_selection_entry, self._sniffer_test_status_var)
                   ).pack(side="left", padx=(6, 0))
-        tk.Button(action_row, text="Borrar muestra", bg=RED, fg=TEXT,
+        tk.Button(action_row_2, text="Borrar muestra", bg=RED, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2",
                   command=lambda: self._delete_selected_sniffer_sample(self._sniffer_test_status_var)
                   ).pack(side="left", padx=(6, 0))
-        tk.Button(action_row, text="Limpiar map_id", bg=RED, fg=TEXT,
+        tk.Button(action_row_2, text="Limpiar map_id", bg=RED, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2",
                   command=lambda: self._clear_current_map_samples(self._sniffer_test_status_var)
                   ).pack(side="left", padx=(6, 0))
-        tk.Label(action_row, textvariable=self._sniffer_copy_status_var, bg=BG, fg=SUBTEXT,
+        tk.Label(action_row_2, textvariable=self._sniffer_copy_status_var, bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
-        tk.Label(action_row, textvariable=self._sniffer_test_status_var, bg=BG, fg=YELLOW,
+        tk.Label(action_row_2, textvariable=self._sniffer_test_status_var, bg=BG, fg=YELLOW,
                  font=("Segoe UI", 8, "bold")).pack(side="left", padx=(12, 0))
 
         body = tk.Frame(parent, bg=BG, padx=10, pady=6)
@@ -3500,6 +4586,9 @@ class App(tk.Tk):
         center.pack(side="left", fill="both", expand=True, padx=(10, 0))
         right = tk.Frame(body, bg=BG)
         right.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        self._sniffer_body_left = left
+        self._sniffer_body_center = center
+        self._sniffer_body_right = right
 
         tk.Label(left, text="Entidades de mapa (GM)", bg=BG, fg=TEXT,
                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
@@ -3540,18 +4629,19 @@ class App(tk.Tk):
             if not entry:
                 return
             template_ids = entry.get("template_ids", [])
-            if template_ids:
+            if template_ids and hasattr(self, "_template_db_id_var"):
                 self._template_db_id_var.set(str(template_ids[0]))
             resolved = entry.get("resolved_mobs", [])
-            if resolved:
+            if resolved and hasattr(self, "_template_db_name_var"):
                 self._template_db_name_var.set(str(resolved[0]))
-            elif entry.get("entity_kind") in {"mob", "mob_group"}:
+            elif entry.get("entity_kind") in {"mob", "mob_group"} and hasattr(self, "_template_db_name_var"):
                 self._template_db_name_var.set("")
             actor_id = str(entry.get("actor_id", "")).strip()
-            if actor_id and actor_id.lstrip("+-").isdigit() and int(actor_id) > 0:
+            if actor_id and actor_id.lstrip("+-").isdigit() and int(actor_id) > 0 and hasattr(self, "_player_db_id_var"):
                 self._player_db_id_var.set(actor_id)
                 follow_db = self._normalized_follow_player_db()
-                self._player_db_name_var.set(str(follow_db.get(actor_id, {}).get("name", "")))
+                if hasattr(self, "_player_db_name_var"):
+                    self._player_db_name_var.set(str(follow_db.get(actor_id, {}).get("name", "")))
             map_id = self._current_runtime_map_id()
             if self._sniffer_test_status_var is not None:
                 self._sniffer_test_status_var.set(
@@ -3872,7 +4962,8 @@ class App(tk.Tk):
             self.after(1800, lambda: status_var.set(""))
 
     def _build_controls(self, parent):
-        sniffer_row = tk.Frame(parent, bg=BG)
+        runtime_header, runtime_body = self._collapsible_section(parent, "Runtime", start_collapsed=False)
+        sniffer_row = tk.Frame(runtime_body, bg=BG)
         sniffer_row.pack(fill="x", pady=(2, 6))
         self._sniffer_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("sniffer_enabled", False)))
         tk.Checkbutton(sniffer_row, text="Sniffer activo", variable=self._sniffer_var, bg=BG,
@@ -3880,10 +4971,28 @@ class App(tk.Tk):
                        font=("Segoe UI", 9), command=self._save_sniffer_setting).pack(side="left")
         self._lbl_sniffer_status = tk.Label(sniffer_row, text="inactivo", bg=BG, fg=SUBTEXT,
                                             font=("Segoe UI", 8, "bold"))
-        self._lbl_sniffer_status.pack(side="right")
+        self._lbl_sniffer_status.pack(side="left", padx=(4, 0))
+        tk.Button(sniffer_row, text="Simular Descarga Banco", bg=BLUE, fg=BG,
+                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
+                  cursor="hand2", command=self._simulate_unload).pack(side="right", padx=(0, 10))
+
+        unload_row = tk.Frame(runtime_body, bg=BG)
+        unload_row.pack(fill="x", pady=(0, 6))
+        self._enable_bank_unload_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("enable_bank_unload", False)))
+        tk.Checkbutton(unload_row, text="Habilitar descarga en banco", variable=self._enable_bank_unload_var, bg=BG,
+                       activebackground=BG, fg=GREEN, selectcolor=BG,
+                       font=("Segoe UI", 9), command=self._save_bank_unload_setting).pack(side="left")
+
+        manual_row = tk.Frame(runtime_body, bg=BG)
+        manual_row.pack(fill="x", pady=(0, 6))
+        self._combat_manual_mode_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("combat_manual_mode", False)))
+        tk.Checkbutton(manual_row, text="Modo manual en combate (pausa auto-combate)", variable=self._combat_manual_mode_var, bg=BG,
+                       activebackground=BG, fg=YELLOW, selectcolor=BG,
+                       font=("Segoe UI", 9, "bold"), command=self._save_combat_manual_mode_setting).pack(side="left")
 
         # Selector de perfil de combate
-        profile_row = tk.Frame(parent, bg=BG)
+        combat_header, combat_body = self._collapsible_section(parent, "Combate", start_collapsed=False)
+        profile_row = tk.Frame(combat_body, bg=BG)
         profile_row.pack(fill="x", pady=(4, 6))
         tk.Label(profile_row, text="Perfil de combate:", bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 9)).pack(side="left")
@@ -3898,7 +5007,7 @@ class App(tk.Tk):
         profile_cb.pack(side="left", padx=(8, 0))
         profile_cb.bind("<<ComboboxSelected>>", lambda e: self._on_profile_changed())
 
-        ready_row = tk.Frame(parent, bg=BG)
+        ready_row = tk.Frame(combat_body, bg=BG)
         ready_row.pack(fill="x", pady=(0, 6))
         tk.Label(ready_row, text="Tiempo tras posicionarse (s):", bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 9)).pack(side="left")
@@ -3907,13 +5016,49 @@ class App(tk.Tk):
         tk.Entry(ready_row, textvariable=self._combat_placement_settle_var, width=8,
                  bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat",
                  font=("Segoe UI", 9)).pack(side="left", padx=(8, 6))
-        tk.Button(ready_row, text="Guardar cambios", bg=GREEN, fg=BG,
+        tk.Button(ready_row, text="Guardar", bg=GREEN, fg=BG,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._save_combat_timing).pack(side="left")
-        tk.Label(ready_row, text="Espera extra antes de marcar listo tras auto-posicionarse al iniciar combate.",
-                 bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
+        tk.Label(combat_body, text="Espera extra antes de marcar listo tras auto-posicionarse al iniciar combate.",
+                 bg=BG, fg=SUBTEXT, font=("Segoe UI", 8), wraplength=420, justify="left").pack(anchor="w", pady=(0, 6))
 
-        follow_row = tk.Frame(parent, bg=BG)
+        bot_cfg = self.config_data.get("bot", {})
+        self._combat_poll_min_var = tk.StringVar(value=str(bot_cfg.get("combat_poll_interval_min", 1.0)))
+        self._combat_poll_max_var = tk.StringVar(value=str(bot_cfg.get("combat_poll_interval_max", 1.0)))
+        self._combat_spell_select_min_var = tk.StringVar(value=str(bot_cfg.get("combat_spell_select_delay_min", 0.12)))
+        self._combat_spell_select_max_var = tk.StringVar(value=str(bot_cfg.get("combat_spell_select_delay_max", 0.12)))
+        self._combat_post_click_min_var = tk.StringVar(value=str(bot_cfg.get("combat_post_click_delay_min", 0.12)))
+        self._combat_post_click_max_var = tk.StringVar(value=str(bot_cfg.get("combat_post_click_delay_max", 0.12)))
+        self._combat_cooldown_min_var = tk.StringVar(value=str(bot_cfg.get("combat_turn_cooldown_min", 0.35)))
+        self._combat_cooldown_max_var = tk.StringVar(value=str(bot_cfg.get("combat_turn_cooldown_max", 0.35)))
+
+        def _add_timing_fields():
+            timing_container = tk.Frame(combat_body, bg=BG)
+            timing_container.pack(fill="x", pady=(6, 6))
+            tk.Label(timing_container, text="Velocidad de combate (min - max s):", bg=BG, fg=YELLOW, font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 4))
+            
+            pairs = [
+                ("Poll sniffer:", self._combat_poll_min_var, self._combat_poll_max_var),
+                ("Delay select spell:", self._combat_spell_select_min_var, self._combat_spell_select_max_var),
+                ("Delay post click:", self._combat_post_click_min_var, self._combat_post_click_max_var),
+                ("Cooldown fin turno:", self._combat_cooldown_min_var, self._combat_cooldown_max_var),
+            ]
+            for label, vmin, vmax in pairs:
+                row = tk.Frame(timing_container, bg=BG)
+                row.pack(fill="x", pady=1)
+                tk.Label(row, text=label, bg=BG, fg=SUBTEXT, font=("Segoe UI", 8), width=18, anchor="w").pack(side="left")
+                tk.Entry(row, textvariable=vmin, width=5, bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(0, 4))
+                tk.Label(row, text="-", bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
+                tk.Entry(row, textvariable=vmax, width=5, bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(4, 6))
+
+            btn_row = tk.Frame(timing_container, bg=BG)
+            btn_row.pack(fill="x", pady=(4, 0))
+            tk.Button(btn_row, text="Guardar tiempos", bg=GREEN, fg=BG, font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2, cursor="hand2", command=self._save_combat_speed_timing).pack(side="left")
+        
+        _add_timing_fields()
+
+        players_header, players_body = self._collapsible_section(parent, "Players", start_collapsed=False)
+        follow_row = tk.Frame(players_body, bg=BG)
         follow_row.pack(fill="x", pady=(0, 6))
         leveling_cfg = self.config_data.setdefault("leveling", {})
         self._follow_players_var = tk.BooleanVar(value=bool(leveling_cfg.get("follow_players_enabled", False)))
@@ -3932,7 +5077,7 @@ class App(tk.Tk):
         tk.Label(follow_row, textvariable=self._follow_players_count_var, bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 8, "bold")).pack(side="left", padx=(10, 0))
 
-        follow_detail_row = tk.Frame(parent, bg=BG)
+        follow_detail_row = tk.Frame(players_body, bg=BG)
         follow_detail_row.pack(fill="x", pady=(0, 6))
         tk.Label(follow_detail_row, text="Player guardado:", bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 8)).pack(side="left")
@@ -3963,28 +5108,92 @@ class App(tk.Tk):
                  font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
         self._refresh_follow_player_controls()
 
+        join_fight_row = tk.Frame(players_body, bg=BG)
+        join_fight_row.pack(fill="x", pady=(0, 6))
+        tk.Label(join_fight_row, text="Unirse a peleas de:", bg=BG, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).pack(anchor="w")
+        join_fight_form = tk.Frame(join_fight_row, bg=BG)
+        join_fight_form.pack(fill="x", pady=(4, 0))
+        self._join_external_fight_actor_var = tk.StringVar(value="")
+        self._join_external_fight_actor_combo = ttk.Combobox(
+            join_fight_form,
+            textvariable=self._join_external_fight_actor_var,
+            state="readonly",
+            width=28,
+            values=[],
+        )
+        self._join_external_fight_actor_combo.pack(side="left", padx=(0, 6), fill="x", expand=True)
+        self._join_external_fight_actor_combo.bind("<<ComboboxSelected>>", lambda _e: self._save_external_fight_join_settings())
+        leveling_cfg = self.config_data.setdefault("leveling", {})
+        self._join_external_fight_any_var = tk.BooleanVar(
+            value=bool(leveling_cfg.get("join_external_fights_any", False))
+        )
+        tk.Checkbutton(
+            join_fight_form,
+            text="Cualquier pelea",
+            variable=self._join_external_fight_any_var,
+            bg=BG,
+            activebackground=BG,
+            fg=GREEN,
+            selectcolor=BG,
+            font=("Segoe UI", 8, "bold"),
+            command=self._save_external_fight_join_settings,
+        ).pack(side="left", padx=(6, 0))
+        self._join_external_fight_status_var = tk.StringVar(value="")
+        tk.Label(players_body, textvariable=self._join_external_fight_status_var, bg=BG, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).pack(anchor="w", pady=(0, 6))
+        self._refresh_external_fight_join_controls()
+
+        conditions_header, conditions_body = self._collapsible_section(parent, "Condiciones del combate", start_collapsed=False)
+        conditions_row = tk.Frame(conditions_body, bg=BG)
+        conditions_row.pack(fill="x", pady=(0, 6))
+        self._ignore_single_mob_groups_var = tk.BooleanVar(
+            value=bool(leveling_cfg.get("ignore_single_mob_groups", False))
+        )
+        tk.Checkbutton(
+            conditions_row,
+            text="Ignorar todo combate con solo 1 mob",
+            variable=self._ignore_single_mob_groups_var,
+            bg=BG,
+            activebackground=BG,
+            fg=YELLOW,
+            selectcolor=BG,
+            font=("Segoe UI", 8, "bold"),
+            command=self._save_ignore_single_mob_groups,
+        ).pack(side="left")
+
         # Fila de configuracion especifica por perfil
-        self._profile_extra_frame = tk.Frame(parent, bg=BG)
+        self._profile_extra_frame = tk.Frame(combat_body, bg=BG)
         self._profile_extra_frame.pack(fill="x")
         self._build_profile_extra()
 
     def _build_status(self, parent):
         row = tk.Frame(parent, bg=BG)
         row.pack(fill="x")
+        self._status_frame = row
         tk.Label(row, text="Estado:", bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 9)).pack(side="left")
         self.lbl_status = tk.Label(row, text="Detenido", bg=BG, fg=RED,
                                    font=("Segoe UI", 9, "bold"))
         self.lbl_status.pack(side="left", padx=6)
+        self.lbl_pods = tk.Label(row, text="PODS: ? / ?", bg=BG, fg=SUBTEXT,
+                                 font=("Segoe UI", 9, "bold"))
+        self.lbl_pods.pack(side="left", padx=10)
         self.lbl_count = tk.Label(row, text="Cosechados: 0", bg=BG, fg=SUBTEXT,
                                   font=("Segoe UI", 9))
         self.lbl_count.pack(side="right")
 
     def _build_log(self, parent):
-        tk.Label(parent, text="Log", bg=BG, fg=TEXT,
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(10, 2))
+        header = tk.Frame(parent, bg=BG)
+        header.pack(fill="x", pady=(10, 2))
+        tk.Label(header, text="Log", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 10, "bold")).pack(side="left")
+        tk.Button(header, text="Copiar todo", bg=ACCENT, fg=TEXT,
+                  font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
+                  cursor="hand2", command=self._copy_log_text).pack(side="right")
         frame = tk.Frame(parent, bg=PANEL)
         frame.pack(fill="both")
+        self._log_frame = frame
         self.log_text = tk.Text(frame, height=12, width=52, bg=PANEL, fg=TEXT,
                                 font=("Consolas", 8), relief="flat",
                                 state="disabled", wrap="word")
@@ -3992,6 +5201,13 @@ class App(tk.Tk):
         self.log_text.configure(yscrollcommand=scroll.set)
         self.log_text.pack(side="left", fill="both", padx=6, pady=6)
         scroll.pack(side="right", fill="y")
+
+    def _copy_log_text(self):
+        if not hasattr(self, "log_text") or self.log_text is None:
+            return
+        text = self.log_text.get("1.0", "end-1c")
+        self.clipboard_clear()
+        self.clipboard_append(text)
 
     # ------------------------------------------------------------ Actions --
     def _check_resource(self, resource_name: str, profession: str, lbl_count: tk.Label):
@@ -4218,6 +5434,31 @@ class App(tk.Tk):
     def _save_combat_profile(self):
         self.config_data["bot"]["combat_profile"] = self._combat_profile_var.get()
         save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        self.log_queue.put(("log", f"[COMBAT] Perfil de combate guardado: {self._combat_profile_var.get()}"))
+
+    def _save_primary_actor_id(self):
+        raw = (self._primary_actor_id_var.get() or "").strip()
+        if raw:
+            if not raw.lstrip("+-").isdigit() or int(raw) <= 0:
+                messagebox.showwarning(
+                    "Actor ID invalido",
+                    "Ingresa un Actor ID numerico positivo del PJ actual.",
+                    parent=self,
+                )
+                return
+            actor_id = str(int(raw))
+        else:
+            actor_id = None
+
+        self.config_data.setdefault("bot", {})["actor_id"] = actor_id
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        rendered = actor_id or "sin configurar"
+        self._primary_actor_status_var.set(f"Actual: {rendered}")
+        self.log_queue.put(("log", f"[BOT] Actor ID principal guardado: {rendered}"))
 
     def _save_combat_timing(self):
         try:
@@ -4606,6 +5847,12 @@ class App(tk.Tk):
         self.btn_pause.config(state="disabled", text="⏸  Pausar")
         self.lbl_status.config(text="Detenido", fg=RED)
 
+    def _simulate_unload(self):
+        if self.bot_thread and self.bot_thread.bot:
+            self.bot_thread.bot.simulate_unload()
+        else:
+            messagebox.showinfo("Bot detenido", "Inicia el bot primero para simular la descarga.", parent=self)
+
     # --------------------------------------------------------- Queue poll --
     def _poll_queue(self):
         try:
@@ -4616,6 +5863,12 @@ class App(tk.Tk):
                     if "Cosechados:" in data:
                         total = data.split("Cosechados:")[-1].strip()
                         self.lbl_count.config(text=f"Cosechados: {total}")
+                    if "[MOBS_ACTIVATED]" in data or "[TELEPORT] Ruta" in data or "[UNLOAD] Pócima" in data:
+                        self.config_data = load_config()
+                        self._sync_runtime_bot_config()
+                        self._refresh_mobs()
+                        self._refresh_navigation_profiles()
+                        self._update_leveling_route_toggle_button()
                     # Redirigir a ventana de debug si está abierta
                     cb = getattr(self, "_raw_log_cb", None)
                     if cb:
@@ -4627,11 +5880,21 @@ class App(tk.Tk):
                     else:
                         self.btn_pause.config(text="⏸  Pausar")
                         self.lbl_status.config(text="Corriendo", fg=GREEN)
+                elif event == "scan_mobs_empty":
+                    self.log_queue.put(("log", "[MOBS] Todos los mobs quedaron desactivados"))
+                    self._refresh_mobs()
                 elif event == "stopped":
                     self.bot_thread = None
                     self._stop_bot()
         except queue.Empty:
             pass
+
+        # Actualizar label de pods
+        if hasattr(self, "lbl_pods") and self.bot_thread and self.bot_thread.bot:
+            bot = self.bot_thread.bot
+            p_curr = bot.current_pods if bot.current_pods is not None else "?"
+            p_max = bot.max_pods if bot.max_pods is not None else "?"
+            self.lbl_pods.config(text=f"PODS: {p_curr} / {p_max}")
 
         # Actualizar label de estado del sniffer
         if hasattr(self, "_lbl_sniffer_status"):
@@ -4653,6 +5916,7 @@ class App(tk.Tk):
         if current_map_id is not None and self._resource_node_map_var.get() != str(current_map_id):
             self._resource_node_map_var.set(str(current_map_id))
             self._refresh_resource_node_list()
+        self._refresh_main_runtime_summary()
 
         try:
             self._refresh_sniffer_tab()

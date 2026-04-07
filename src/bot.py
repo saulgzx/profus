@@ -128,6 +128,8 @@ class Bot:
         self._combat_entered_at = 0.0
         self._placement_auto_attempted = False
         self._placement_ready_sent = False
+        self._awaiting_ready_ack_until = 0.0
+        self._seen_explicit_turn_start = False
         self._current_map_id: int | None = None
         self._last_map_id: int | None = None
         self._current_map_data: str | None = None
@@ -155,6 +157,10 @@ class Bot:
         self._spell_cooldowns: dict[int, int] = {}
         self._last_spell_server_confirm_at = 0.0
         self._last_spell_server_confirm = {"spell_id": None, "cell_id": None}
+        self._last_action_sequence_ready_at = 0.0
+        self._last_enemy_positions_log: tuple | None = None
+        self.current_pods: int | None = None
+        self.max_pods: int | None = None
         origins = config["bot"].get("cell_calibration", {}).get("map_origins", [])
         start_map_idx = int(config["bot"].get("start_map_idx", 0) or 0)
         max_map_idx = max(0, len(origins) - 1)
@@ -180,6 +186,8 @@ class Bot:
         self.test_mode = bool(config.get("bot", {}).get("test_mode", False))
         if self.test_mode:
             print("[BOT] Modo TEST activo - sin clicks ni ataques")
+        self._traveling_to_farm_map: str | None = None
+        self._mobs_to_activate_on_arrival: str = ""
 
         if config["bot"].get("sniffer_enabled", False):
             self._start_sniffer()
@@ -247,6 +255,52 @@ class Bot:
             print(f"[BOT] No pude decodificar XML local para map_id={map_id}: {exc}")
             return xml_map_data, []
 
+    def _has_line_of_sight(self, start_cell: int, end_cell: int) -> bool:
+        """Chequea si hay línea de visión entre dos celdas usando el algoritmo de Bresenham."""
+        if not self._current_map_cells:
+            return True  # Fallback optimista si no hay datos del mapa
+
+        map_width = int(self.config.get("bot", {}).get("cell_calibration", {}).get("map_width", 15) or 15)
+        try:
+            start_coords = cell_id_to_grid(start_cell, map_width)
+            end_coords = cell_id_to_grid(end_cell, map_width)
+        except (TypeError, ValueError):
+            return False
+
+        if not start_coords or not end_coords:
+            return False
+
+        map_cells_by_grid = {(c['x'], c['y']): c for c in self._current_map_cells if 'x' in c and 'y' in c}
+        x1, y1 = start_coords
+        x2, y2 = end_coords
+        dx = abs(x2 - x1)
+        dy = -abs(y2 - y1)
+        sx = 1 if x1 < x2 else -1
+        sy = 1 if y1 < y2 else -1
+        err = dx + dy
+
+        path_cells = []
+        while True:
+            path_cells.append((x1, y1))
+            if x1 == x2 and y1 == y2:
+                break
+            e2 = 2 * err
+            if e2 >= dy:
+                err += dy
+                x1 += sx
+            if e2 <= dx:
+                err += dx
+                y1 += sy
+        
+        # Revisar celdas intermedias en el camino
+        for i in range(1, len(path_cells) - 1):
+            cell_coords = path_cells[i]
+            cell_data = map_cells_by_grid.get(cell_coords)
+            if cell_data and not cell_data.get('line_of_sight', True):
+                return False  # Obstáculo encontrado
+                
+        return True
+
     # ─────────────────────────────────────── sniffer helpers ──
     def _enter_combat(self, now: float, preserve_turn_ready: bool = False):
         """Transición al estado in_combat desde cualquier estado base."""
@@ -270,8 +324,12 @@ class Bot:
         self._combat_entered_at = now
         self._placement_auto_attempted = False
         self._placement_ready_sent = False
+        self._awaiting_ready_ack_until = 0.0
+        self._seen_explicit_turn_start = False
         self._placement_cells = []
         self._follow_player_last_seen_sig = {}
+        self._manual_placement_notified = False
+        self._manual_turn_notified = False
         if self._combat_auto_ready_at <= now:
             auto_ready_delay = float(self.config["bot"].get("combat_auto_ready_delay", 0.0) or 0.0)
             self._combat_auto_ready_at = now + max(0.0, auto_ready_delay)
@@ -420,8 +478,6 @@ class Bot:
             return False
         if self._actor_ids_match(candidate, self._sniffer_my_actor):
             return False
-        if source in {"turn_start", "fighter_stats"} and self._sniffer_my_actor is not None:
-            return False
         positive_ids = self._known_positive_actor_ids()
         current_known = any(
             self._actor_ids_match(self._sniffer_my_actor, aid) for aid in positive_ids
@@ -431,6 +487,9 @@ class Bot:
             return self._set_my_actor_id(candidate, source)
         return False
 
+    def _arm_ready_actor_ack(self, window_s: float = 2.0):
+        self._awaiting_ready_ack_until = time.time() + max(0.5, float(window_s))
+
     def _stop_sniffer(self):
         if self._sniffer:
             self._sniffer.stop()
@@ -438,6 +497,12 @@ class Bot:
 
     def shutdown(self):
         self._stop_sniffer()
+
+    def simulate_unload(self):
+        print("[BOT] Simulando secuencia de descarga de inventario...")
+        self.state = "unloading_start"
+        self.pending = []
+        self.mob_pending = []
 
     def set_resource_recording_mode(self, active: bool):
         self._resource_recording_mode = bool(active)
@@ -516,10 +581,13 @@ class Bot:
             "turn_ready": self._sniffer_turn_ready,
             "fight_ended": self._sniffer_fight_ended,
             "combat_cell": self._combat_cell,
+            "enemies": self._get_enemy_targets(),
             "castigo_osado_active": self._castigo_osado_active,
             "castigo_osado_cooldown": self._spell_cooldowns.get(433, 0),
+            "spell_cooldowns": dict(self._spell_cooldowns),
             "last_spell_server_confirm_at": self._last_spell_server_confirm_at,
             "last_spell_server_confirm": dict(self._last_spell_server_confirm),
+            "last_action_sequence_ready_at": self._last_action_sequence_ready_at,
         }
 
     def _actor_ids_match(self, left: str | None, right: str | None) -> bool:
@@ -592,7 +660,9 @@ class Bot:
                 print(f"[SNIFFER] Actor ID aprendido: {self._sniffer_my_actor}")
 
             if self._actor_ids_match(actor, self._sniffer_my_actor):
+                self._seen_explicit_turn_start = True
                 self._sniffer_turn_ready = True
+                self._manual_turn_notified = False
                 self._sniffer_in_placement = False
                 self._placement_ready_sent = False
                 self._combat_auto_ready_pending = False
@@ -622,6 +692,7 @@ class Bot:
             self._last_refined_cell = None
             self._sniffer_in_placement = False
             self._placement_ready_sent = False
+            self._awaiting_ready_ack_until = 0.0
             self._combat_auto_ready_pending = False
             self._combat_auto_ready_at = 0.0
             self._combat_entered_at = 0.0
@@ -632,10 +703,16 @@ class Bot:
             self._spell_cooldowns = {}
             self._last_spell_server_confirm_at = 0.0
             self._last_spell_server_confirm = {"spell_id": None, "cell_id": None}
+            self._last_action_sequence_ready_at = 0.0
             self._fighters = {}
             self._my_team_id = None
             self._map_entities = {}
             self.mob_pending = []
+
+        elif event == "action_sequence_ready":
+            if self._actor_ids_match(data.get("actor_id"), self._sniffer_my_actor):
+                self._last_action_sequence_ready_at = time.time()
+                print(f"[SNIFFER] Servidor listo para mi siguiente accion (secuencia)")
 
         elif event == "pa_update":
             if self._actor_ids_match(data["actor_id"], self._sniffer_my_actor):
@@ -643,29 +720,50 @@ class Bot:
                 self._sniffer_pm = data.get("pm")
                 print(f"[SNIFFER] PA actualizados: {data['pa']}")
 
+        elif event == "pods_update":
+            self.current_pods = data.get("current")
+            self.max_pods = data.get("max")
+            pct = (self.current_pods / max(1, self.max_pods)) * 100
+            print(f"[SNIFFER] PODS actualizados: {self.current_pods} / {self.max_pods} ({pct:.1f}%)")
+            if self.max_pods and self.max_pods > 0:
+                pct = (self.current_pods / self.max_pods) * 100
+                print(f"[SNIFFER] PODS actualizados: {self.current_pods} / {self.max_pods} ({pct:.1f}%)")
+            else:
+                print(f"[SNIFFER] PODS actualizados: {self.current_pods} / {self.max_pods}")
+
         elif event == "player_profile":
             actor = str(data.get("actor_id", "")).strip()
             name = str(data.get("name", "")).strip()
-            selected_actor = self._selected_follow_actor_id()
-            in_combat_context = bool(
-                self.state == "in_combat"
-                or self._sniffer_in_placement
-                or self._placement_cells
-                or self._fighters
-            )
-            if actor and in_combat_context and not self._actor_ids_match(actor, selected_actor):
+            if actor and self._actor_ids_match(actor, self._sniffer_my_actor):
+                print(f"[SNIFFER] Actor propio confirmado por PM: {actor} ({name or '?'})")
                 fighter = self._fighters.get(actor)
-                arena_match = any(self._actor_ids_match(entry.get("actor_id"), actor) for entry in self._pending_gic_entries)
-                if fighter is not None or arena_match:
-                    rebound = self._set_my_actor_id(actor, "player_profile")
+                if self._combat_cell is None and fighter is not None:
+                    try:
+                        self._combat_cell = int(fighter.get("cell_id"))
+                        print(f"[SNIFFER] Mi celda recuperada desde luchador PM: {self._combat_cell}")
+                    except (TypeError, ValueError):
+                        pass
+
+        elif event == "player_ready":
+            raw = str(data.get("raw", "") or "").strip()
+            if (
+                raw
+                and len(raw) > 1
+                and raw[0] in {"0", "1"}
+                and time.time() <= self._awaiting_ready_ack_until
+            ):
+                actor = raw[1:].strip()
+                selected_actor = self._selected_follow_actor_id()
+                if (
+                    self._is_probable_player_actor(actor)
+                    and not self._actor_ids_match(actor, selected_actor)
+                ):
+                    rebound = self._set_my_actor_id(actor, "player_ready")
                     if rebound:
-                        print(f"[SNIFFER] Actor propio confirmado por PM: {actor} ({name or '?'})")
-                    if self._combat_cell is None and fighter is not None:
-                        try:
-                            self._combat_cell = int(fighter.get("cell_id"))
-                            print(f"[SNIFFER] Mi celda recuperada desde luchador PM: {self._combat_cell}")
-                        except (TypeError, ValueError):
-                            pass
+                        print(f"[SNIFFER] Actor propio confirmado por GR: {actor}")
+                if self._actor_ids_match(actor, self._sniffer_my_actor):
+                    self._sniffer_in_placement = False
+                self._awaiting_ready_ack_until = 0.0
 
         elif event == "placement":
             self._sniffer_in_placement = True
@@ -781,7 +879,13 @@ class Bot:
                 self._follow_player_last_seen_sig = {}
                 self._follow_player_pending = None
                 self._follow_player_wait_until = 0.0
-            print(f"[DIAG] map id={self._current_map_id} name={data.get('map_name')!r}")
+            
+            interactives = [c["cell_id"] for c in self._current_map_cells if c.get("is_interactive_cell")]
+            teleports = [c["cell_id"] for c in self._current_map_cells if c.get("has_teleport_texture")]
+            print(
+                f"[DIAG] map id={self._current_map_id} name={data.get('map_name')!r} "
+                f"| interactivas={interactives} | teleports={teleports}"
+            )
             if (
                 self.state == "change_map"
                 and self._current_map_id is not None
@@ -921,15 +1025,6 @@ class Bot:
                         self._remember_follow_player_entry(aid, existing, visible=True)
                         self._maybe_follow_selected_player_event(aid, existing, "gic")
                     self._maybe_follow_tracked_players_on_event()
-                positive_entries = [
-                    entry for entry in entries
-                    if self._is_probable_player_actor(entry.get("actor_id"))
-                ]
-                if len(positive_entries) == 1:
-                    self._maybe_rebind_actor_id(
-                        positive_entries[0].get("actor_id"),
-                        "arena_state",
-                    )
                 # Actualizar posiciones de todos los luchadores desde GIC
                 for e in entries:
                     aid = e.get("actor_id", "")
@@ -976,7 +1071,11 @@ class Bot:
             ga_action_id = str(data.get("ga_action_id", "")).strip()
             ga_actor = str(data.get("actor_id", "")).strip()
             ga_params = data.get("action_params") or []
+            # Captura completa en combate: loguea todos los GA para análisis de protocolo
+            if self.state == "in_combat" and self.config["bot"].get("combat_debug_capture", False):
+                print(f"[COMBAT_CAPTURE] GA action={ga_action_id} actor={ga_actor} params={ga_params} raw={data.get('raw')!r}")
             if ga_action_id == "300" and self._actor_ids_match(ga_actor, self._sniffer_my_actor) and ga_params:
+
                 spell_tokens = [part.strip() for part in str(ga_params[0]).split(",")]
                 spell_id = spell_tokens[0] if len(spell_tokens) > 0 else None
                 cell_id = spell_tokens[1] if len(spell_tokens) > 1 else None
@@ -1031,6 +1130,8 @@ class Bot:
 
         elif event == "fighter_stats":
             # GTM — actualizar HP/PA/celda de luchadores tras cada acción
+            if self.state == "in_combat" and self.config["bot"].get("combat_debug_capture", False):
+                print(f"[COMBAT_CAPTURE] fighter_stats entries={data.get('entries')} raw={data.get('raw')!r}")
             for entry in data.get("entries", []):
                 actor_id = entry.get("actor_id", "")
                 if not actor_id:
@@ -1086,7 +1187,27 @@ class Bot:
                     self._castigo_osado_active = False
                     print("[SNIFFER] Castigo Osado disponible")
 
+        elif event == "zaap_list":
+            raw = str(data.get("raw", "")).strip()
+            print(f"[SNIFFER] Menú de Zaap/Zaapi detectado. Destinos: {raw}")
+
         elif event == "info_msg":
+            msg_id = data.get("msg_id")
+            args = data.get("args", "")
+
+            if msg_id == "021" and args:
+                print(f"[FARMING] ¡Objeto recolectado/recibido! -> {args}")
+            elif msg_id == "112":
+                print("[BOT] ⚠️ Inventario LLENO (100% PODS detectado por el juego).")
+                if self.state not in {"in_combat", "full_pods", "change_map", "wait_harvest_confirm", "harvesting_wait"} and not self.state.startswith("unloading_"):
+                    if self.config.get("bot", {}).get("enable_bank_unload", False) and (self.current_pods is None or self.current_pods >= 950):
+                        print("[BOT] Iniciando descarga en banco por inventario lleno.")
+                        self.state = "unloading_start"
+                    else:
+                        self.state = "full_pods"
+                    self.pending = []
+                    self.mob_pending = []
+
             if (
                 self.config["farming"].get("mode", "resource") == "resource"
                 and time.time() <= self._harvest_sniff_debug_until
@@ -1158,6 +1279,19 @@ class Bot:
             self.ui_detector.find_ui(frame, element_name),
             region=region,
         )
+
+    def _find_ui_screen_rightmost(
+        self,
+        frame,
+        element_name: str,
+        region: dict | None = None,
+    ) -> tuple[int, int] | None:
+        """Busca todas las coincidencias y devuelve la que este mas a la derecha (eje X mayor)."""
+        matches = self.ui_detector.find_all(frame, element_name, "ui")
+        if not matches:
+            return None
+        rightmost = max(matches, key=lambda p: p[0])
+        return self._frame_pos_to_screen(rightmost, region=region)
 
     def _has_specific_projection_calibration(self) -> bool:
         cal = self.config["bot"].get("cell_calibration", {})
@@ -2219,7 +2353,7 @@ class Bot:
         by_fp[fp] = {"x": round(ox, 2), "y": round(oy, 2)}
         print(f"[GRID] Guardando origin para fp={fp}: ({ox:.1f}, {oy:.1f})")
         try:
-            import yaml, os
+            import yaml
             config_path = os.path.join(
                 os.path.dirname(__file__), "..", "config.yaml"
             )
@@ -2234,13 +2368,13 @@ class Bot:
         except Exception as e:
             print(f"[GRID] No se pudo guardar en config.yaml: {e}")
 
-    def _get_enemy_screen_positions(self) -> list[tuple[int, int]]:
+    def _get_enemy_targets(self) -> list[dict]:
         """Retorna las posiciones en pantalla de los enemigos activos.
 
         En Dofus Retro los monstruos tienen actor_id negativo.
         Si conocemos el team_id propio, también filtramos por equipo.
         """
-        positions: list[tuple[int, int]] = []
+        targets: list[dict] = []
         for actor_id, fighter in self._fighters.items():
             if self._actor_ids_match(actor_id, self._sniffer_my_actor):
                 continue  # saltar al propio personaje
@@ -2266,14 +2400,24 @@ class Bot:
             if cell_id is None:
                 continue
             screen_pos = self._cell_to_screen(cell_id)
-            if screen_pos and self._is_point_on_monitor(screen_pos):
-                positions.append(screen_pos)
+            if not (screen_pos and self._is_point_on_monitor(screen_pos)):
+                continue
+            
+            targets.append({
+                "id": actor_id,
+                "cell_id": cell_id,
+                "hp": fighter.get("hp"),
+                "screen_pos": screen_pos
+            })
 
-        if positions:
-            print(f"[COMBAT] {len(positions)} enemigo(s) detectados en celdas → pantalla: {positions}")
-        else:
-            print(f"[COMBAT] Sin posiciones de enemigos (fighters={len(self._fighters)})")
-        return positions
+        current_signature = tuple(sorted(t["id"] for t in targets))
+        if current_signature != self._last_enemy_positions_log:
+            if targets:
+                print(f"[COMBAT] {len(targets)} enemigo(s) detectados: {[t['id'] for t in targets]}")
+            else:
+                print(f"[COMBAT] Sin posiciones de enemigos (fighters={len(self._fighters)})")
+            self._last_enemy_positions_log = current_signature
+        return targets
 
     def _get_enemy_fighter_cells(self) -> list[int]:
         enemy_cells: list[int] = []
@@ -2350,6 +2494,11 @@ class Bot:
         if current_min_distance <= desired_range:
             return None
 
+        if hasattr(self.combat_profile, "movement_score"):
+            current_rank = self.combat_profile.movement_score(self._combat_cell, 0, current_distances)
+        else:
+            current_rank = None
+
         occupied_cells: set[int] = set()
         for actor_id, fighter in self._fighters.items():
             if not fighter.get("alive", True):
@@ -2388,12 +2537,19 @@ class Bot:
             if not enemy_distances:
                 continue
             enemy_distance = min(enemy_distances)
-            if enemy_distance >= current_min_distance:
-                continue
             projected = self._cell_to_screen(candidate_cell)
             if projected is None or not self._is_point_on_monitor(projected):
                 continue
-            rank = (enemy_distance, -self_distance, candidate_cell)
+                
+            if hasattr(self.combat_profile, "movement_score"):
+                rank = self.combat_profile.movement_score(candidate_cell, self_distance, enemy_distances)
+                if rank >= current_rank:
+                    continue
+            else:
+                if enemy_distance >= current_min_distance:
+                    continue
+                rank = (enemy_distance, -self_distance, candidate_cell)
+                
             if best is None or rank < best["rank"]:
                 best = {
                     "cell_id": candidate_cell,
@@ -2457,7 +2613,10 @@ class Bot:
                 if distance is not None
             ]
             if current_enemy_distances:
-                current_rank = (min(current_enemy_distances), current_self_distance, int(self._combat_cell))
+                if hasattr(self.combat_profile, "placement_score"):
+                    current_rank = self.combat_profile.placement_score(int(self._combat_cell), current_self_distance, current_enemy_distances)
+                else:
+                    current_rank = (min(current_enemy_distances), current_self_distance, int(self._combat_cell))
         best: dict | None = None
         placement_candidates = list(self._placement_cells) if self._placement_cells else []
         if placement_candidates:
@@ -2500,9 +2659,14 @@ class Bot:
             if not enemy_distances:
                 continue
             enemy_distance = min(enemy_distances)
-            rank = (enemy_distance, self_distance, candidate_cell)
-            if enemy_distance >= current_min_distance and best is not None:
-                continue
+            
+            if hasattr(self.combat_profile, "placement_score"):
+                rank = self.combat_profile.placement_score(candidate_cell, self_distance, enemy_distances)
+            else:
+                rank = (enemy_distance, self_distance, candidate_cell)
+                if enemy_distance >= current_min_distance and best is not None:
+                    continue
+                    
             if best is None or rank < best["rank"]:
                 best = {
                     "cell_id": candidate_cell,
@@ -2603,7 +2767,10 @@ class Bot:
         else:
             print(f"[COMBAT] Movimiento no confirmado hacia cell={target_cell}")
         return {
+            "attempted_move": True,
             "moved": moved,
+            "target_cell": target_cell,
+            "target_pos": target_pos,
             "combat_cell": current_cell,
             "self_screen_pos": self._cell_to_screen(current_cell) if current_cell is not None else None,
             "fight_ended": self._sniffer_fight_ended,
@@ -2622,6 +2789,26 @@ class Bot:
             return True
         return False
 
+    def _find_listo_screen(self, frame: np.ndarray) -> tuple[int, int] | None:
+        pos = self._find_ui_screen(frame, "Listo")
+        if pos:
+            return pos
+
+        fh, fw = frame.shape[:2]
+        y1 = max(0, int(fh * 0.50))
+        x1 = max(0, int(fw * 0.50))
+        crop = frame[y1:fh, x1:fw]
+        best_pos, best_score = self.ui_detector.best_match(crop, "Listo", "ui")
+        if best_pos is not None and best_score >= 0.65:
+            abs_pos = self._frame_pos_to_screen((x1 + int(best_pos[0]), y1 + int(best_pos[1])))
+            print(f"[BOT] Listo detectado por best_match score={best_score:.3f} pos={abs_pos}")
+            return abs_pos
+
+        return None
+
+    def _is_listo_visible(self, frame: np.ndarray) -> bool:
+        return self._find_listo_screen(frame) is not None
+
     def _find_combat_result_close(self, frame: np.ndarray, *, allow_orange_fallback: bool = False) -> tuple[int, int] | None:
         close_pos = self._find_ui_screen(frame, "Cerrar")
         if close_pos:
@@ -2635,40 +2822,17 @@ class Bot:
 
         if not allow_orange_fallback:
             return None
+        
+        return None
 
-        fh, fw = frame.shape[:2]
-        y1 = max(0, int(fh * 0.68))
-        y2 = min(fh, int(fh * 0.98))
-        x1 = max(0, int(fw * 0.55))
-        x2 = min(fw, int(fw * 0.96))
-        if y2 - y1 < 20 or x2 - x1 < 20:
-            return None
-        crop = frame[y1:y2, x1:x2]
-        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, np.array([5, 120, 120]), np.array([30, 255, 255]))
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        best_rect = None
-        best_area = 0
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            area = w * h
-            if area < 8000:
-                continue
-            if w < 140 or h < 40:
-                continue
-            if w / max(h, 1) < 2.0:
-                continue
-            if area > best_area:
-                best_area = area
-                best_rect = (x, y, w, h)
-        if best_rect is None:
-            return None
-        x, y, w, h = best_rect
-        pos = (x1 + x + w // 2, y1 + y + h // 2)
-        print(f"[BOT] Cerrar detectado por boton naranja pos={pos} area={best_area}")
-        return pos
+    def _cast_dunayar_in_placement_if_visible(self, frame: np.ndarray) -> bool:
+        dunayar_x = int(self.config["bot"].get("dunayar_x", 1679) or 1679)
+        dunayar_y = int(self.config["bot"].get("dunayar_y", 1261) or 1261)
+        print(f"[COMBAT] Duna Yar - doble click en inventario ({dunayar_x}, {dunayar_y})")
+        self.screen.focus_window()
+        self.actions.double_click((dunayar_x, dunayar_y))
+        time.sleep(float(self.config["bot"].get("dunayar_refresh_delay", 0.3) or 0.3))
+        return True
 
     def tick(self):
         now = time.time()
@@ -2713,6 +2877,28 @@ class Bot:
                 self.state = "scan"
                 return
 
+        # ── 1.5 Descarga automática al alcanzar 950 PODS ──
+        if self.state not in {"in_combat", "full_pods", "change_map", "wait_harvest_confirm", "harvesting_wait"} and not self.state.startswith("unloading_") and not self.state.startswith("teleport_"):
+            if self.current_pods is not None:
+                if self.current_pods >= 950:
+                    if self.config.get("bot", {}).get("enable_bank_unload", False):
+                        print(f"[BOT] ⚠️ Límite de PODS alcanzado ({self.current_pods}). Iniciando descarga en banco.")
+                        self.state = "unloading_start"
+                        self.pending = []
+                        self.mob_pending = []
+                    else:
+                        print(f"[BOT] ⚠️ Límite de PODS alcanzado ({self.current_pods}). Descarga en banco deshabilitada, deteniendo farmeo.")
+                        self.state = "full_pods"
+                        self.pending = []
+                        self.mob_pending = []
+
+        if self.state == "full_pods":
+            if self.current_pods is not None and self.current_pods < 950:
+                print("[BOT] Espacio en inventario liberado. Reanudando...")
+                self.state = "scan"
+            time.sleep(1.0)
+            return
+
         # ── 2. Popups globales — solo capturar si no estamos esperando turno ──
         # Con sniffer en combate: evitar capturas de pantalla innecesarias
         if (
@@ -2729,6 +2915,8 @@ class Bot:
         if not waiting_for_turn and not (sniffer_resource_mode and self.state != "in_combat"):
             frame_global = self.screen.capture()
             for popup in ("OK", "SubioNivel", "Cerrar", "FueraAlcance"):
+                if popup == "Cerrar" and self.state.startswith("teleport_"):
+                    continue
                 if popup == "Cerrar":
                     close_pos = self._find_combat_result_close(frame_global, allow_orange_fallback=False)
                     if close_pos:
@@ -2754,9 +2942,9 @@ class Bot:
                 frame = self.screen.capture()
                 mi_turno_tpl = getattr(self.combat_profile, "mi_turno_template", None)
                 listo_detected = (
-                    self.ui_detector.find_ui(frame, "Listo")
+                    self._is_listo_visible(frame)
                     if getattr(self.combat_profile, "uses_listo_template", True)
-                    else None
+                    else False
                 )
                 mi_turno_detected = (
                     self.ui_detector.find_ui(frame, mi_turno_tpl)
@@ -2773,9 +2961,9 @@ class Bot:
                 frame = self.screen.capture()
                 mi_turno_tpl = getattr(self.combat_profile, "mi_turno_template", None)
                 listo_detected = (
-                    self.ui_detector.find_ui(frame, "Listo")
+                    self._is_listo_visible(frame)
                     if getattr(self.combat_profile, "uses_listo_template", True)
-                    else None
+                    else False
                 )
                 mi_turno_detected = (
                     self.ui_detector.find_ui(frame, mi_turno_tpl)
@@ -2798,6 +2986,9 @@ class Bot:
                 return
 
             if self._combat_auto_ready_pending:
+                if self.config.get("bot", {}).get("combat_manual_mode", False):
+                    self._combat_auto_ready_pending = False
+                    
                 placement_active = bool(self._sniffer_in_placement or self._placement_cells)
                 if not placement_active:
                     placement_grace = float(self.config["bot"].get("combat_placement_grace_delay", 0.75) or 0.75)
@@ -2811,7 +3002,17 @@ class Bot:
                     if now < self._combat_auto_ready_at:
                         time.sleep(idle_wait)
                         return
+
+                    if self.sniffer_active:
+                        self._drain_sniff_queue()
+                    if self.sniffer_active and self._sniffer_turn_ready:
+                        print("[BOT] Turno iniciado antes de enviar Space de auto-ready. Omitiendo.")
+                        self._combat_auto_ready_pending = False
+                        self.combat_action_until = min(self.combat_action_until, time.time())
+                        return
+
                     print("[BOT] Inicio de combate detectado - enviando Space para marcar listo")
+                    self._arm_ready_actor_ack()
                     self.actions.quick_press_key("space")
                     self.actions.park_mouse(self.screen.parking_regions())
                     self._combat_auto_ready_pending = False
@@ -2821,15 +3022,13 @@ class Bot:
                     # El evento Gp del sniffer lo activara si corresponde.
                     self.combat_action_until = now + self.config["bot"].get("combat_ready_delay", 0.3)
                     return
-            # Con sniffer: esperar evento GTS sin capturar pantalla, excepto durante placement.
+            # Con sniffer: priorizar GTS, pero permitir fallback visual de MiTurno.
             if self.sniffer_active and not self._sniffer_turn_ready and not self._sniffer_in_placement:
                 if now > self.combat_deadline:
                     print("[BOT] Timeout combate — re-escaneando")
                     self.harvested_positions = []
                     self.state = self._combat_origin
                     return
-                time.sleep(idle_wait)
-                return
 
             # Capturar frame (necesario para posición y popups)
             time.sleep(frame_delay)
@@ -2856,16 +3055,18 @@ class Bot:
                     frame = self.screen.capture()
 
             listo_pos = (
-                self._find_ui_screen(frame, "Listo")
+                self._find_listo_screen(frame)
                 if getattr(self.combat_profile, "uses_listo_template", True)
                 else None
             )
             mi_turno_tpl = getattr(self.combat_profile, "mi_turno_template", None)
             mi_turno_detected = self.ui_detector.find_ui(frame, mi_turno_tpl) if mi_turno_tpl else None
-            sniffer_turn = self.sniffer_active and self._sniffer_turn_ready
-            enemy_positions = self._get_enemy_screen_positions()
+            sniffer_turn = self.sniffer_active and self._sniffer_turn_ready            
+            enemy_targets = self._get_enemy_targets()
+            enemy_positions = [t["screen_pos"] for t in enemy_targets]
             ctx = CombatContext(
                 self.screen, self.ui_detector, self.actions, self.config,
+                enemies=enemy_targets,
                 enemy_positions=enemy_positions,
                 current_pa=self._sniffer_pa,
                 current_mp=self._sniffer_pm,
@@ -2875,17 +3076,41 @@ class Bot:
                 buff_flags={
                     "castigo_osado_active": self._castigo_osado_active,
                     "castigo_osado_cooldown": self._spell_cooldowns.get(433, 0),
+                    "spell_cooldowns": dict(self._spell_cooldowns),
                 },
                 refresh_combat_state=self._refresh_combat_state_for_profile,
                 project_self_cell=lambda cell_id: self._project_cell_with_visual_grid_exact(cell_id, self._current_map_id),
                 move_towards_enemy=self._move_towards_enemy_for_profile,
-                enemy_in_melee_range=self._enemy_in_melee_range,
+                enemy_in_melee_range=self._enemy_in_melee_range,                
+                has_line_of_sight=self._has_line_of_sight,
+                cell_distance=self._combat_cell_distance,
             )
+
+            # Auto-actualizar context properties cuando el perfil refresca el estado
+            original_refresh = ctx.refresh_combat_state
+            def _auto_update_refresh(wait_s=0.0):
+                res = original_refresh(wait_s)
+                if "enemies" in res:
+                    ctx.enemies = res["enemies"]
+                    ctx.enemy_positions = [e["screen_pos"] for e in res["enemies"]]
+                if "combat_cell" in res and res["combat_cell"] is not None:
+                    ctx.my_cell = res["combat_cell"]
+                return res
+            ctx.refresh_combat_state = _auto_update_refresh
 
             placement_detected = bool(listo_pos) or (self.sniffer_active and self._sniffer_in_placement)
             turn_detected = bool(mi_turno_detected or sniffer_turn)
             if turn_detected:
                 self._sniffer_in_placement = False
+                
+                if self.config.get("bot", {}).get("combat_manual_mode", False):
+                    self._sniffer_turn_ready = False
+                    if not getattr(self, "_manual_turn_notified", False):
+                        print("[COMBAT] Modo manual activo: turno del jugador (esperando accion manual)")
+                        self._manual_turn_notified = True
+                    self.combat_action_until = now + 1.0
+                    return
+
                 if self._detected_origin is None:
                     self._try_detect_grid(frame)
                 action_source = "unknown"
@@ -2931,23 +3156,53 @@ class Bot:
                     self.harvested_positions = []
                     self.state = self._combat_origin
                     return
+                if result == "retry":
+                    self._sniffer_turn_ready = True
+                    self.combat_action_until = now + float(
+                        self.config["bot"].get("combat_retry_delay", 0.35) or 0.35
+                    )
+                    return
                 self.combat_action_until = now + cooldown
                 self.no_fuir_count = 0
 
             elif placement_detected:
                 self._sniffer_in_placement = True
+                
+                if self.config.get("bot", {}).get("combat_manual_mode", False):
+                    if not getattr(self, "_manual_placement_notified", False):
+                        print("[COMBAT] Modo manual activo: fase de colocacion manual (presiona Listo para empezar)")
+                        self._manual_placement_notified = True
+                    self.combat_action_until = now + 1.0
+                    return
+
                 if not self._placement_ready_sent:
-                    frame = self._auto_place_before_ready(frame)
+                    self._cast_dunayar_in_placement_if_visible(frame)
+                if not self._placement_ready_sent or (self.sniffer_active and now > self._awaiting_ready_ack_until):
+                    if not self._placement_ready_sent:
+                        frame = self._auto_place_before_ready(frame)
+
+                    if self.sniffer_active:
+                        self._drain_sniff_queue()
+                    if self.sniffer_active and (not self._sniffer_in_placement or self._sniffer_turn_ready):
+                        if not self._placement_ready_sent:
+                            print("[BOT] Combate iniciado (GTS) durante auto-colocacion. Se omite presionar Listo.")
+                        self._placement_ready_sent = True
+                        self._combat_auto_ready_pending = False
+                        self.combat_action_until = min(self.combat_action_until, time.time())
+                        return
+
                     listo_pos = (
-                        self._find_ui_screen(frame, "Listo")
+                        self._find_listo_screen(frame)
                         if getattr(self.combat_profile, "uses_listo_template", True)
                         else None
                     )
                     if listo_pos:
-                        print("[BOT] Fase de colocacion detectada - clickeando Listo")
+                        print(f"[BOT] Fase de colocacion detectada - clickeando Listo (retry={self._placement_ready_sent})")
+                        self._arm_ready_actor_ack(window_s=3.0)
                         self.combat_profile.on_placement(listo_pos, ctx)
                     else:
-                        print("[BOT] Fase de colocacion detectada - marcando listo con Space")
+                        print(f"[BOT] Fase de colocacion detectada - marcando listo con Space (retry={self._placement_ready_sent})")
+                        self._arm_ready_actor_ack(window_s=3.0)
                         self.actions.quick_press_key("space")
                         self.actions.park_mouse(self.screen.parking_regions())
                     self._placement_ready_sent = True
@@ -2988,6 +3243,19 @@ class Bot:
         if self.state in {"scan", "scan_mobs"} and self._maybe_follow_tracked_players():
             return
 
+        if self.state in {"scan", "scan_mobs"}:
+            active_teleport_name = self.config.get("active_teleport_profile")
+            teleport_enabled = self.config.get("teleport_enabled", bool(active_teleport_name))
+            if teleport_enabled and active_teleport_name:
+                active_teleport = self.config.get("teleport_profiles", {}).get(active_teleport_name)
+                if active_teleport and str(self._current_map_id) == str(active_teleport.get("trigger_map")):
+                    print(f"[TELEPORT] Iniciando secuencia de perfil: {active_teleport_name}")
+                    self.state = "teleport_start"
+                    self._teleport_deadline = now + 1.5
+                    self.pending = []
+                    self.mob_pending = []
+                    return
+
         if self.state == "scan":
             if farming_mode == "leveling":
                 self.state = "scan_mobs"
@@ -3005,6 +3273,357 @@ class Bot:
 
         elif self.state == "change_map":
             self._change_map()
+
+        elif self.state == "teleport_start":
+            active_teleport = self.config.get("teleport_profiles", {}).get(self.config.get("active_teleport_profile"))
+            if not active_teleport or str(self._current_map_id) != str(active_teleport.get("trigger_map")):
+                self.state = "scan"
+                return
+            if now < self._teleport_deadline:
+                time.sleep(0.1)
+                return
+            cell_id = active_teleport.get("cell_id")
+            pos = self._movement_click_pos_for_cell(int(cell_id)) or self._cell_to_screen(int(cell_id))
+            if pos:
+                print(f"[TELEPORT] Click en celda: {cell_id}")
+                self.screen.focus_window()
+                self.actions.quick_click(pos)
+                self.state = "teleport_click_use"
+                self._teleport_deadline = now + 3.0
+            else:
+                print(f"[TELEPORT] No se pudo proyectar la celda {cell_id}. Reintentando en breve.")
+                self._teleport_deadline = now + 2.0
+
+        elif self.state == "teleport_click_use":
+            if now > self._teleport_deadline:
+                print("[TELEPORT] Timeout esperando menu contextual, reintentando...")
+                self.state = "teleport_start"
+                self._teleport_deadline = now + 1.0
+                return
+            frame = self.screen.capture()
+            pos = self._find_ui_screen(frame, "Utilizar")
+            if pos:
+                print("[TELEPORT] Click en 'Utilizar.png'")
+                self.actions.quick_click(pos)
+                self.state = "teleport_select_dest"
+                self._teleport_deadline = now + 4.0
+            time.sleep(0.1)
+
+        elif self.state == "teleport_select_dest":
+            if now > self._teleport_deadline:
+                print("[TELEPORT] Timeout esperando destino, reintentando...")
+                self.state = "teleport_start"
+                self._teleport_deadline = now + 1.0
+                return
+            active_teleport = self.config.get("teleport_profiles", {}).get(self.config.get("active_teleport_profile"))
+            dest_image = active_teleport.get("dest_image")
+            frame = self.screen.capture()
+            pos = self._find_ui_screen(frame, dest_image)
+            if pos:
+                print(f"[TELEPORT] Click en '{dest_image}.png'")
+                self.actions.quick_click(pos)
+                self.state = "teleport_confirm"
+                self._teleport_deadline = now + 2.0
+            time.sleep(0.1)
+
+        elif self.state == "teleport_confirm":
+            if now > self._teleport_deadline:
+                print("[TELEPORT] Timeout confirmacion, reintentando...")
+                self.state = "teleport_start"
+                self._teleport_deadline = now + 1.0
+                return
+            frame = self.screen.capture()
+            pos = self._find_ui_screen(frame, "Teletransportarse")
+            if pos:
+                print("[TELEPORT] Click en 'Teletransportarse.png'")
+                self._last_map_id = self._current_map_id
+                self._sniffer_map_loaded = False
+                self.actions.quick_click(pos)
+                self.state = "teleport_wait_map"
+                self._teleport_deadline = now + 20.0
+            time.sleep(0.1)
+
+        elif self.state == "teleport_wait_map":
+            active_name = self.config.get("active_teleport_profile")
+            active_teleport = self.config.get("teleport_profiles", {}).get(active_name)
+            if not active_teleport:
+                print(f"[TELEPORT] Error: Perfil '{active_name}' no encontrado. Abortando.")
+                self.state = "scan"
+                return
+                
+            expected_map = str(active_teleport.get("expected_map") or "").strip()
+            current_map = str(self._current_map_id).strip()
+            trigger_map = str(active_teleport.get("trigger_map") or "").strip()
+            
+            map_changed = (self._current_map_id is not None and self._last_map_id is not None and self._current_map_id != self._last_map_id) or self._sniffer_map_loaded
+            
+            if map_changed or (expected_map and current_map == expected_map) or (current_map != trigger_map and current_map):
+                print(f"[TELEPORT] Llegamos al destino: {current_map}")
+                route_name = active_teleport.get("route_name")
+                mode = self.config.get("farming", {}).get("mode", "resource")
+                if mode == "resource":
+                    self.config.setdefault("farming", {})["route_profile"] = route_name
+                else:
+                    self.config.setdefault("leveling", {})["route_profile"] = route_name
+                
+                self.config.setdefault("navigation", {})["enabled"] = True
+                
+                try:
+                    import yaml
+                    config_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        raw = yaml.safe_load(f)
+                    
+                    if mode == "resource":
+                        raw.setdefault("farming", {})["route_profile"] = route_name
+                    else:
+                        raw.setdefault("leveling", {})["route_profile"] = route_name
+                    
+                    raw.setdefault("navigation", {})["enabled"] = True
+                    with open(config_path, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+                    print(f"[TELEPORT] Ruta '{route_name}' y navegación activada guardadas en config.")
+                except Exception as e:
+                    print(f"[BOT] Error guardando config.yaml (route): {e}")
+
+                self.route_index = 0
+                
+                farm_map = active_teleport.get("farm_map")
+                mobs_activate = active_teleport.get("mobs_activate", "")
+                if farm_map and str(farm_map).strip():
+                    if str(farm_map).strip() == str(self._current_map_id):
+                        print(f"[TELEPORT] Ya estamos en el mapa de farmeo ({farm_map}).")
+                        self._traveling_to_farm_map = None
+                        self._activate_pending_mobs(mobs_activate)
+                    else:
+                        self._traveling_to_farm_map = str(farm_map).strip()
+                        self._mobs_to_activate_on_arrival = mobs_activate
+                        print(f"[TELEPORT] Modo viaje activo. Ignorando mobs/recursos hasta map_id={self._traveling_to_farm_map}")
+                else:
+                    self._traveling_to_farm_map = None
+                    self._activate_pending_mobs(mobs_activate)
+                    
+                self.state = "scan"
+                return
+            if now > self._teleport_deadline:
+                print(f"[TELEPORT] Timeout esperando mapa '{expected_map}' (actual: '{current_map}'), abortando.")
+                self.state = "scan"
+                return
+            time.sleep(0.1)
+
+        elif self.state == "unloading_start":
+            # Deshabilitar todos los mobs activos para evitar combate durante la descarga
+            mobs_cfg = self.config.get("leveling", {}).get("mobs", {})
+            self._unloading_disabled_mobs = [
+                name for name, cfg in mobs_cfg.items() if cfg.get("enabled", True)
+            ]
+            for name in self._unloading_disabled_mobs:
+                mobs_cfg[name]["enabled"] = False
+            if self._unloading_disabled_mobs:
+                print(f"[UNLOAD] Mobs deshabilitados temporalmente: {self._unloading_disabled_mobs}")
+            print("[UNLOAD] Usando pócima de recuerdo (tecla 2)...")
+            self.screen.focus_window()
+            self.actions.quick_press_key("2")
+            self._unloading_original_route = self.config.get("farming", {}).get("route_profile")
+            mode = self.config.get("farming", {}).get("mode")
+            if mode == "leveling":
+                self._unloading_original_route = self.config.get("leveling", {}).get("route_profile")
+            
+            if mode == "resource":
+                self.config.setdefault("farming", {})["route_profile"] = "Zaapabanco"
+            else:
+                self.config.setdefault("leveling", {})["route_profile"] = "Zaapabanco"
+                
+            try:
+                import yaml
+                config_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+                with open(config_path, "r", encoding="utf-8") as f:
+                    raw = yaml.safe_load(f)
+                if mode == "resource":
+                    raw.setdefault("farming", {})["route_profile"] = "Zaapabanco"
+                else:
+                    raw.setdefault("leveling", {})["route_profile"] = "Zaapabanco"
+                with open(config_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+            except Exception:
+                pass
+            
+            self._unloading_wait_until = now + 4.0
+            self.state = "unloading_wait_map"
+
+        elif self.state == "unloading_wait_map":
+            if now < self._unloading_wait_until:
+                time.sleep(0.1)
+                return
+            self.state = "unloading_navigate"
+
+        elif self.state == "unloading_navigate":
+            route_point = self._route_point_for_current_map()
+            if route_point is None:
+                print("[UNLOAD] Llegamos al destino. Interactuando con cajero en celda 520.")
+                self.state = "unloading_interact_banker"
+                self._unloading_step_deadline = now + 2.0
+            else:
+                self.map_change_phase = "click"
+                self.state = "change_map"
+                self._combat_origin = "unloading_navigate"
+
+        elif self.state == "unloading_interact_banker":
+            if now < self._unloading_step_deadline:
+                time.sleep(0.1)
+                return
+            
+            target_cell = 520
+            banker_entry = self._map_entities.get("-1")
+            if banker_entry and banker_entry.get("cell_id") is not None:
+                try:
+                    target_cell = int(banker_entry["cell_id"])
+                    print(f"[UNLOAD] Banquero (actor -1) detectado en celda {target_cell}.")
+                except (ValueError, TypeError):
+                    pass
+            else:
+                print("[UNLOAD] Banquero no detectado, usando celda 520 como fallback.")
+
+            projected = self._cell_to_screen(target_cell)
+            self.screen.focus_window()
+            if projected and self._is_point_on_monitor(projected):
+                self.actions.quick_click(projected)
+            else:
+                print(f"[UNLOAD] No se pudo proyectar celda {target_cell}. Fallback al centro.")
+                mon = self.screen.game_region()
+                self.actions.quick_click((mon["left"] + mon["width"] // 2, mon["top"] + mon["height"] // 2))
+            
+            self._unloading_step_deadline = now + 2.0
+            self.state = "unloading_click_hablar"
+
+        elif self.state == "unloading_click_hablar":
+            if now < self._unloading_step_deadline:
+                frame = self.screen.capture()
+                pos = self._find_ui_screen(frame, "Hablar")
+                if pos:
+                    print("[UNLOAD] Click en 'Hablar.png'")
+                    self.actions.quick_click(pos)
+                    self._unloading_step_deadline = now + 3.0
+                    self.state = "unloading_open_bank"
+                time.sleep(0.1)
+                return
+            print("[UNLOAD] No se vio 'Hablar.png', reintentando interactuar con el cajero...")
+            self.state = "unloading_interact_banker"
+
+        elif self.state == "unloading_open_bank":
+            if now < self._unloading_step_deadline:
+                frame = self.screen.capture()
+                pos = self._find_ui_screen(frame, "Consultarcaja")
+                if pos:
+                    print("[UNLOAD] Click en 'Consultarcaja.png'")
+                    self.actions.quick_click(pos)
+                    self._unloading_step_deadline = now + 2.0
+                    self.state = "unloading_transfer_1"
+                time.sleep(0.1)
+                return
+            print("[UNLOAD] Reintentando interactuar con el cajero...")
+            self.state = "unloading_interact_banker"
+
+        elif self.state == "unloading_transfer_1":
+            if now < self._unloading_step_deadline:
+                time.sleep(0.1)
+                return
+            frame = self.screen.capture()
+            pos = self._find_ui_screen_rightmost(frame, "Recursosbank")
+            if pos:
+                print("[UNLOAD] Click en 'Recursosbank.png'")
+                self.actions.quick_click(pos)
+                self._unloading_step_deadline = now + 1.0
+                self.state = "unloading_transfer_2"
+            else:
+                print("[UNLOAD] Esperando 'Recursosbank.png'...")
+                time.sleep(0.2)
+
+        elif self.state == "unloading_transfer_2":
+            if now < self._unloading_step_deadline:
+                time.sleep(0.1)
+                return
+            frame = self.screen.capture()
+            pos = self._find_ui_screen_rightmost(frame, "ordenarytransferir")
+            if pos:
+                print("[UNLOAD] Click en 'ordenarytransferir.png'")
+                self.actions.quick_click(pos)
+                self._unloading_step_deadline = now + 1.0
+                self.state = "unloading_transfer_3"
+            else:
+                print("[UNLOAD] Esperando 'ordenarytransferir.png'...")
+                time.sleep(0.2)
+
+        elif self.state == "unloading_transfer_3":
+            if now < self._unloading_step_deadline:
+                time.sleep(0.1)
+                return
+            frame = self.screen.capture()
+            pos = self._find_ui_screen_rightmost(frame, "transferirobjetos")
+            if pos:
+                print("[UNLOAD] Click en 'transferirobjetos.png'")
+                self.actions.quick_click(pos)
+                self._unloading_step_deadline = now + 1.5
+                self.state = "unloading_finish"
+            else:
+                print("[UNLOAD] Esperando 'transferirobjetos.png'...")
+                time.sleep(0.2)
+
+        elif self.state == "unloading_finish":
+            if now < self._unloading_step_deadline:
+                time.sleep(0.1)
+                return
+            print("[UNLOAD] Descarga terminada. Presionando ESC y volviendo (tecla 2).")
+            print("[UNLOAD] Descarga terminada. Presionando ESC y usando pócima (tecla 2).")
+            self.actions.quick_press_key("esc")
+            time.sleep(0.5)
+            self._last_map_id = self._current_map_id
+            self._sniffer_map_loaded = False
+            self.actions.quick_press_key("2")
+            
+            if hasattr(self, "_unloading_original_route"):
+                mode = self.config.get("farming", {}).get("mode")
+                if mode == "resource":
+                    self.config.setdefault("farming", {})["route_profile"] = self._unloading_original_route
+                else:
+                    self.config.setdefault("leveling", {})["route_profile"] = self._unloading_original_route
+                    
+                try:
+                    import yaml
+                    config_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        raw = yaml.safe_load(f)
+                    if mode == "resource":
+                        raw.setdefault("farming", {})["route_profile"] = self._unloading_original_route
+                    else:
+                        raw.setdefault("leveling", {})["route_profile"] = self._unloading_original_route
+                    with open(config_path, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+                except Exception as e:
+                    print(f"[BOT] Error restaurando ruta en config.yaml: {e}")
+            
+            self._unloading_wait_until = now + 5.0
+            self._unloading_wait_until = now + 15.0
+            self.state = "unloading_wait_return"
+
+        elif self.state == "unloading_wait_return":
+            if now < self._unloading_wait_until:
+                time.sleep(0.1)
+            if self._sniffer_map_loaded or (self._current_map_id is not None and self._last_map_id is not None and self._current_map_id != self._last_map_id):
+                print("[UNLOAD] Pócima utilizada y mapa cargado. Retomando actividad normal.")
+                self._restore_unloading_mobs()
+                self.state = "scan"
+                self.route_index = 0
+                return
+            print("[UNLOAD] Retomando actividad normal.")
+            self._restore_unloading_mobs()
+            self.state = "scan"
+            if now > self._unloading_wait_until:
+                print("[UNLOAD] Timeout esperando carga de mapa de pócima. Retomando de todos modos.")
+                self.state = "scan"
+                self.route_index = 0
+                return
+            time.sleep(0.1)
 
         elif self.state == "click_resource":
             if not self.pending:
@@ -3354,6 +3973,8 @@ class Bot:
         return True
 
     def _attempt_join_external_fight(self) -> bool:
+        if getattr(self, "_traveling_to_farm_map", None):
+            return False
         pending = self._external_fight_pending
         if not pending or self.state == "in_combat":
             return False
@@ -3480,7 +4101,7 @@ class Bot:
             rows,
             key=lambda entry: (
                 0 if entry.get("entity_kind") in {"mob", "mob_group"} else 1,
-                int(entry.get("cell_id", 0)),
+                int(entry.get("cell_id") if entry.get("cell_id") is not None else 0),
                 str(entry.get("actor_id", "")),
             ),
         )
@@ -3521,6 +4142,40 @@ class Bot:
                 mapping[mob_name] = ids
         return mapping
 
+    def _configured_ignored_mobs(self) -> dict[str, set[int]]:
+        mobs_cfg = self.config.get("leveling", {}).get("mobs", {})
+        mapping: dict[str, set[int]] = {}
+        for mob_name, mob_cfg in mobs_cfg.items():
+            if not mob_cfg.get("ignore", False):
+                continue
+            ids: set[int] = set()
+            for value in mob_cfg.get("template_ids", []):
+                try:
+                    ids.add(int(value))
+                except (TypeError, ValueError):
+                    continue
+            mapping[mob_name] = ids
+        return mapping
+
+    def _configured_veto_mob_template_ids(self) -> set[int]:
+        leveling_cfg = self.config.get("leveling", {})
+        raw = leveling_cfg.get("mob_group_veto_template_ids", [])
+        values: list[int] = []
+        if isinstance(raw, str):
+            tokens = [token.strip() for token in raw.split(",")]
+        elif isinstance(raw, (list, tuple, set)):
+            tokens = [str(token).strip() for token in raw]
+        else:
+            tokens = []
+        for token in tokens:
+            if not token:
+                continue
+            try:
+                values.append(int(token))
+            except ValueError:
+                continue
+        return set(values)
+
     def _resolve_sniffed_mob_names(self, entry: dict) -> list[str]:
         template_ids = {
             int(value) for value in entry.get("template_ids", [])
@@ -3555,12 +4210,24 @@ class Bot:
     def _sniffed_map_mob_candidates(self) -> list[dict]:
         candidates: list[dict] = []
         configured = self._configured_mob_template_ids()
+        ignored_mobs = self._configured_ignored_mobs()
+        veto_template_ids = self._configured_veto_mob_template_ids()
+        ignore_single_mob_groups = bool(self.config.get("leveling", {}).get("ignore_single_mob_groups", False))
         if not configured:
             return candidates
         for entry in self._map_entities.values():
             if entry.get("entity_kind") not in {"mob", "mob_group"}:
                 continue
             template_ids = self._sniffed_entry_template_ids(entry)
+            total_monsters = 0
+            try:
+                total_monsters = int(entry.get("total_monsters", 0) or 0)
+            except (TypeError, ValueError):
+                total_monsters = 0
+            if ignore_single_mob_groups and total_monsters == 1:
+                actor_id = str(entry.get("actor_id", "")).strip() or "?"
+                print(f"[BOT] Grupo ignorado por 1 mob: actor={actor_id} template_ids={sorted(template_ids)}")
+                continue
             matched_configured = [
                 mob_name
                 for mob_name, configured_ids in configured.items()
@@ -3569,6 +4236,31 @@ class Bot:
             if configured and not matched_configured:
                 continue
             resolved = self._resolve_sniffed_mob_names(entry)
+            ignored_hits = sorted({
+                mob_name
+                for mob_name in resolved + matched_configured
+                if mob_name in ignored_mobs
+            })
+            ignored_template_hits = sorted({
+                template_id
+                for mob_name, configured_ids in ignored_mobs.items()
+                if template_ids & configured_ids
+                for template_id in (template_ids & configured_ids)
+            })
+            if ignored_hits or ignored_template_hits:
+                actor_id = str(entry.get("actor_id", "")).strip() or "?"
+                print(
+                    f"[BOT] Grupo ignorado por mob marcado: actor={actor_id} "
+                    f"mobs={resolved or matched_configured} "
+                    f"ignored={ignored_hits or '[template_id]'} "
+                    f"template_ids={ignored_template_hits}"
+                )
+                continue
+            veto_hits = sorted(template_ids & veto_template_ids)
+            if veto_hits:
+                actor_id = str(entry.get("actor_id", "")).strip() or "?"
+                print(f"[BOT] Mob vetado omitido: actor={actor_id} mobs={resolved} veto_template_ids={veto_hits}")
+                continue
             enriched = dict(entry)
             enriched["resolved_mobs"] = matched_configured or resolved
             candidates.append(enriched)
@@ -3967,17 +4659,30 @@ class Bot:
         nav = self._active_navigation_config()
         routes_by_map = nav.get("route_by_map_id", {})
         if self._current_map_id is not None:
+            exit_by_map = nav.get("route_exit_by_map_id", {})
+            direction = exit_by_map.get(str(self._current_map_id), exit_by_map.get(self._current_map_id))
+            if direction:
+                direction_str = str(direction).strip().lower()
+                if direction_str.startswith("cell:"):
+                    try:
+                        target_cell = int(direction_str.split(":", 1)[1])
+                        click_pos = self._movement_click_pos_for_cell(target_cell)
+                        if click_pos:
+                            return click_pos
+                    except (ValueError, IndexError):
+                        pass
+                else:
+                    auto_point = self._auto_exit_point_for_direction(direction_str)
+                    if auto_point is not None:
+                        return auto_point
+
             point = routes_by_map.get(str(self._current_map_id), routes_by_map.get(self._current_map_id))
             if isinstance(point, (list, tuple)) and len(point) >= 2:
                 try:
                     return int(point[0]), int(point[1])
                 except (TypeError, ValueError):
                     pass
-            exit_by_map = nav.get("route_exit_by_map_id", {})
-            direction = exit_by_map.get(str(self._current_map_id), exit_by_map.get(self._current_map_id))
-            auto_point = self._auto_exit_point_for_direction(direction)
-            if auto_point is not None:
-                return auto_point
+
         return self._next_route_point()
 
     def _active_navigation_config(self) -> dict:
@@ -3996,6 +4701,19 @@ class Bot:
         return nav
 
     def _scan(self):
+        if getattr(self, "_traveling_to_farm_map", None):
+            if str(self._current_map_id) == self._traveling_to_farm_map:
+                print(f"[BOT] Llegamos al mapa de farmeo ({self._traveling_to_farm_map}). Desactivando modo viaje.")
+                self._traveling_to_farm_map = None
+                self._activate_pending_mobs()
+                return
+            else:
+                print(f"[BOT] Viajando hacia {self._traveling_to_farm_map} - Ignorando recursos en map_id={self._current_map_id}")
+                self.map_change_phase = "click"
+                self.state = "change_map"
+                time.sleep(0.2)
+                return
+
         # Modo recursos: solo nodos por map_id + confirmacion del sniffer.
         map_nodes = self._resource_nodes_for_current_map()
         if map_nodes:
@@ -4047,6 +4765,15 @@ class Bot:
         self.empty_scan_count += 1
         if time.time() > self.harvested_until:
             self.harvested_positions = []
+            
+        nav_cfg = self.config.get("navigation", {})
+        move_after = int(nav_cfg.get("empty_scans_before_move", EMPTY_SCANS_BEFORE_MOVE) or EMPTY_SCANS_BEFORE_MOVE)
+        if nav_cfg.get("enabled") and self.empty_scan_count >= move_after:
+            print(f"[BOT] Sin recursos en map_id={self._current_map_id} - iniciando cambio de mapa")
+            self.map_change_phase = "click"
+            self.state = "change_map"
+            return
+            
         time.sleep(self.config["bot"].get("scan_idle_delay", 0.6))
 
     def _change_map(self):
@@ -4056,12 +4783,26 @@ class Bot:
         now = time.time()
         if self.sniffer_active:
             self._drain_sniff_queue()
+
+        if getattr(self, "_traveling_to_farm_map", None) == str(self._current_map_id):
+            print(f"[BOT] Llegamos al mapa de farmeo ({self._traveling_to_farm_map}). Desactivando modo viaje.")
+            self._traveling_to_farm_map = None
+            self._activate_pending_mobs()
+            self.empty_scan_count = 0
+            self.empty_mob_scan_count = 0
+            self.state = "scan"
+            return
+
         route_point = self._route_point_for_current_map() if self.map_change_phase == "click" else None
         if self.map_change_phase == "click":
             if route_point is None:
                 print(f"[BOT] Sin ruta configurada para map_id={self._current_map_id} - re-escaneando")
                 self.empty_scan_count = 0
                 self.empty_mob_scan_count = 0
+                if getattr(self, "_traveling_to_farm_map", None):
+                    print("[BOT] Modo viaje abortado por falta de ruta.")
+                    self._traveling_to_farm_map = None
+                    self._activate_pending_mobs()
                 self.state = "scan"
                 return
             print(f"[BOT] Cambio de mapa map_id={self._current_map_id} - clickeando {route_point}")
@@ -4165,13 +4906,37 @@ class Bot:
         Limita la búsqueda al área de juego (excluye barras de UI) para evitar
         falsos positivos en íconos de la barra de acción / menú lateral.
         """
+        if getattr(self, "_traveling_to_farm_map", None):
+            if str(self._current_map_id) == self._traveling_to_farm_map:
+                print(f"[BOT] Llegamos al mapa de farmeo ({self._traveling_to_farm_map}). Desactivando modo viaje.")
+                self._traveling_to_farm_map = None
+                self._activate_pending_mobs()
+                return
+            else:
+                print(f"[BOT] Viajando hacia {self._traveling_to_farm_map} - Ignorando mobs en map_id={self._current_map_id}")
+                self.map_change_phase = "click"
+                self.state = "change_map"
+                time.sleep(0.2)
+                return
+
         mobs_cfg = self.config.get("leveling", {}).get("mobs", {})
-        enabled = [n for n, c in mobs_cfg.items() if c.get("enabled", True)]
+        enabled = [
+            n for n, c in mobs_cfg.items()
+            if c.get("enabled", True) and not c.get("ignore", False)
+        ]
 
         if self._maybe_follow_tracked_players():
             return
 
         if not enabled:
+            self.empty_mob_scan_count += 1
+            nav_cfg = self.config.get("navigation", {})
+            move_after = int(nav_cfg.get("empty_scans_before_move", EMPTY_SCANS_BEFORE_MOVE) or EMPTY_SCANS_BEFORE_MOVE)
+            if nav_cfg.get("enabled") and self.empty_mob_scan_count >= move_after:
+                print(f"[BOT] Sin mobs habilitados en map_id={self._current_map_id} - iniciando cambio de mapa")
+                self.map_change_phase = "click"
+                self.state = "change_map"
+                return
             time.sleep(self.config["bot"].get("mob_scan_idle_delay", 0.5))
             return
 
@@ -4182,6 +4947,14 @@ class Bot:
                 if map_id != self._last_missing_projection_warn_map_id:
                     print(f"[BOT] map_id={map_id} tiene mobs por sniffer pero falta calibración específica")
                     self._last_missing_projection_warn_map_id = map_id
+                self.empty_mob_scan_count += 1
+                nav_cfg = self.config.get("navigation", {})
+                move_after = int(nav_cfg.get("empty_scans_before_move", EMPTY_SCANS_BEFORE_MOVE) or EMPTY_SCANS_BEFORE_MOVE)
+                if nav_cfg.get("enabled") and self.empty_mob_scan_count >= move_after:
+                    print(f"[BOT] Saltando map_id={self._current_map_id} por falta de calibración para atacar")
+                    self.map_change_phase = "click"
+                    self.state = "change_map"
+                    return
                 time.sleep(self.config["bot"].get("mob_scan_idle_delay", 0.5))
                 return
             projected_targets = self._sniffed_projected_mob_targets()
@@ -4284,7 +5057,10 @@ class Bot:
             time.sleep(self.config["bot"].get("mob_scan_idle_delay", 0.5))
             return
         mobs_cfg = self.config.get("leveling", {}).get("mobs", {})
-        enabled = [n for n, c in mobs_cfg.items() if c.get("enabled", True)]
+        enabled = [
+            n for n, c in mobs_cfg.items()
+            if c.get("enabled", True) and not c.get("ignore", False)
+        ]
         if not enabled:
             self.mob_pending = []
             self.state = "scan_mobs"
@@ -4333,6 +5109,99 @@ class Bot:
             self._combat_auto_ready_at = 0.0
             self.state = "scan_mobs"
 
+    def _restore_unloading_mobs(self):
+        """Reactiva los mobs que fueron deshabilitados al inicio del unloading."""
+        disabled = getattr(self, "_unloading_disabled_mobs", [])
+        if not disabled:
+            return
+        mobs_cfg = self.config.get("leveling", {}).get("mobs", {})
+        for name in disabled:
+            if name in mobs_cfg:
+                mobs_cfg[name]["enabled"] = True
+        print(f"[UNLOAD] Mobs reactivados: {disabled}")
+        self._unloading_disabled_mobs = []
+
+    def _activate_pending_mobs(self, mobs_str: str | None = None):
+        mobs_to_activate = mobs_str if mobs_str is not None else getattr(self, "_mobs_to_activate_on_arrival", "")
+        self._mobs_to_activate_on_arrival = ""
+        if not mobs_to_activate:
+            return
+            
+        target_ids = []
+        for m in mobs_to_activate.split(","):
+            m = m.strip()
+            if m.isdigit():
+                target_ids.append(int(m))
+                
+        if not target_ids:
+            return
+        
+        changed = False
+        lev = self.config.setdefault("leveling", {})
+        mobs = lev.setdefault("mobs", {})
+        template_db = lev.get("template_id_db", {})
+        
+        activated_names = set()
+
+        for mob_name, mob_cfg in mobs.items():
+            mob_tids = []
+            for tid in mob_cfg.get("template_ids", []):
+                try:
+                    mob_tids.append(int(tid))
+                except ValueError:
+                    pass
+            if any(tid in target_ids for tid in mob_tids):
+                if not mob_cfg.get("enabled", False):
+                    mob_cfg["enabled"] = True
+                    changed = True
+                activated_names.add(mob_name)
+        
+        for tid in target_ids:
+            already_active = False
+            for mob_name in activated_names:
+                mob_tids = [int(x) for x in mobs.get(mob_name, {}).get("template_ids", []) if str(x).isdigit()]
+                if tid in mob_tids:
+                    already_active = True
+                    break
+            if already_active:
+                continue
+                
+            db_name = template_db.get(str(tid)) or template_db.get(tid)
+            if db_name:
+                db_name = str(db_name).strip()
+                mob_cfg = mobs.setdefault(db_name, {})
+                if not mob_cfg.get("enabled", False):
+                    mob_cfg["enabled"] = True
+                    changed = True
+                
+                current_tids = mob_cfg.get("template_ids", [])
+                if tid not in current_tids:
+                    current_tids.append(tid)
+                    mob_cfg["template_ids"] = current_tids
+                    changed = True
+                
+                activated_names.add(db_name)
+        
+        if changed:
+            try:
+                import yaml
+                config_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+                with open(config_path, "r", encoding="utf-8") as f:
+                    raw = yaml.safe_load(f)
+                
+                raw_mobs = raw.setdefault("leveling", {}).setdefault("mobs", {})
+                for mob_name in activated_names:
+                    raw_mob_cfg = raw_mobs.setdefault(mob_name, {})
+                    raw_mob_cfg["enabled"] = True
+                    if mob_name in mobs:
+                        raw_mob_cfg["template_ids"] = mobs[mob_name].get("template_ids", [])
+                        
+                with open(config_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+                print(f"[MOBS_ACTIVATED] Mobs activados por ID automáticamente: {', '.join(activated_names)}")
+            except Exception as e:
+                print(f"[BOT] Error guardando config.yaml: {e}")
+
     def _wait_for_combat_entry(self, attack_pos: tuple[int, int] | None = None) -> bool:
         """Espera la transición a combate drenando la cola del sniffer y usando fallback visual."""
         entry_wait = float(self.config["bot"].get("combat_entry_wait", 1.1) or 1.1)
@@ -4359,36 +5228,4 @@ class Bot:
             if ok_btn:
                 print("[BOT] Popup OK detectado durante entrada a combate — cerrando")
                 self.actions.quick_click(ok_btn)
-                time.sleep(self.config["bot"].get("combat_ok_delay", 0.15))
-                continue
-
-            if attack_pos and attack_retries < max_retries and time.time() >= next_retry_at:
-                attack_btn = self._find_ui_screen(frame, "Atacar")
-                if attack_btn:
-                    print("[BOT] Menu Atacar sigue visible — reintentando click")
-                    self.screen.focus_window()
-                    self.actions.quick_click(attack_btn)
-                    attack_retries += 1
-                    next_retry_at = time.time() + max(0.15, retry_delay)
-                    time.sleep(min(0.12, poll_delay))
-                    continue
-
-            # "Listo" indica fase de colocacion y sirve como evidencia visual
-            # de entrada a combate, independientemente del perfil.
-            listo_detected = self.ui_detector.find_ui(frame, "Listo")
-            mi_turno_tpl = getattr(self.combat_profile, "mi_turno_template", None)
-            mi_turno_detected = (
-                self.ui_detector.find_ui(frame, mi_turno_tpl)
-                if mi_turno_tpl
-                else None
-            )
-            if listo_detected or mi_turno_detected:
-                print("[BOT] Combate detectado durante espera post-click")
-                self._enter_combat(time.time())
-                return True
-
-            time.sleep(poll_delay)
-
-        if self.sniffer_active:
-            self._drain_sniff_queue()
-        return self.state == "in_combat"
+    

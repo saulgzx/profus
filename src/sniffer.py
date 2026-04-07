@@ -19,6 +19,7 @@ Eventos emitidos al event_queue (tipo, datos):
   ("game_action",  {"raw": str, "actor_id": str, "action_id": str, "params": list})
   ("info_msg",     {"raw": str, "msg_id": str, "args": str})  Im — mensajes del sistema
   ("pa_update",    {"actor_id": str, "pa": int, "pm": int})   GA action 129
+  ("pods_update",  {"current": int, "max": int})              Ow — actualización de pods (peso)
   ("raw_packet",   {"direction": str, "data": str})           solo en debug_mode=True
   ("player_profile", {"actor_id": str, "name": str, "raw": str}) PM~ — hint fuerte del actor propio
 """
@@ -89,9 +90,10 @@ def _extract_move_destination_cell(path: str) -> int | None:
 
 
 def _parse_info_msg(data: str) -> dict:
-    """Parsea Im{msgId}.{args}  o  Im{msgId}"""
-    if "." in data:
-        msg_id, args = data.split(".", 1)
+    """Parsea Im{msgId};{args}  o  Im{msgId}"""
+    # En Dofus 1.29 el delimitador real entre ID y argumentos es ';'
+    if ";" in data:
+        msg_id, args = data.split(";", 1)
     else:
         msg_id, args = data, ""
     return {"raw": data, "msg_id": msg_id, "args": args}
@@ -658,6 +660,13 @@ class DofusSniffer:
             print(f"[DIAG] gjk actor={actor_id!r} team={team_id!r} cell={cell_id} raw={packet[:140]!r}")
             return
 
+        # ── S{actor_id} — servidor listo para siguiente acción del actor ─────
+        # Formato: S{actor_id}  ej: S22240
+        if len(packet) > 1 and packet[0] == "S" and packet[1:].strip().lstrip("-").isdigit():
+            actor_id = packet[1:].strip()
+            q.put(("action_sequence_ready", {"actor_id": actor_id}))
+            return
+
         # ── GA — acción de juego ───────────────────────────────────────────
         if packet.startswith("GA"):
             data = packet[2:]
@@ -679,6 +688,24 @@ class DofusSniffer:
                             "source": "ga_move",
                         },
                     ))
+            # Atrapar desplazamientos: slide (4), push (5), pull (6)
+            elif move_action_id in {"4", "5", "6"} and move_params:
+                parts = str(move_params[0]).split(",")
+                if len(parts) >= 2:
+                    target_id = parts[0].strip()
+                    try:
+                        dest_cell = int(parts[1].strip())
+                        q.put((
+                            "combatant_cell",
+                            {
+                                "actor_id": target_id,
+                                "cell_id": dest_cell,
+                                "raw": parsed["raw"],
+                                "source": f"ga_{move_action_id}",
+                            },
+                        ))
+                    except ValueError:
+                        pass
 
             # Action 129 = stats update (PA/PM restantes)
             pa_action_id = str(parsed.get("ga_action_id") or parsed.get("action_id") or "").strip()
@@ -769,6 +796,22 @@ class DofusSniffer:
 
         if packet.startswith("Go"):
             q.put(("game_object", {"raw": packet[2:], "packet": packet}))
+            return
+
+        if packet.startswith("Ow"):
+            parts = packet[2:].split("|")
+            if len(parts) >= 2:
+                try:
+                    current_pods = int(parts[0])
+                    max_pods = int(parts[1])
+                    q.put(("pods_update", {"current": current_pods, "max": max_pods}))
+                except ValueError:
+                    pass
+            return
+
+        # ── WC/Wv/Wc — Menú de Zaap / Zaapi ────────────────────────────────
+        if packet.startswith("WC") or packet.startswith("Wc") or packet.startswith("Wv"):
+            q.put(("zaap_list", {"raw": packet}))
             return
 
         # ── cMK — mensaje de chat ──────────────────────────────────────────

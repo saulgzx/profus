@@ -96,6 +96,8 @@ class Detector:
         for fname in sorted(os.listdir(mob_dir)):
             if not fname.lower().endswith(".png"):
                 continue
+            if fname.startswith("_"):
+                continue
             sprite_name = os.path.splitext(fname)[0]
             matches = self.find_all(frame, sprite_name, f"mobs/{mob_name}")
             all_points.extend(matches)
