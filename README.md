@@ -1,6 +1,6 @@
 # Dofus AutoFarm Bot
 
-Solo para gente via
+Solo para gente via, no funciona en peruanos
 
 ---
 
