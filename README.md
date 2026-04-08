@@ -1,8 +1,6 @@
 # Dofus AutoFarm Bot
 
-Bot de automatizacion para farming de recursos y combate en Dofus (cliente retro o Unity).
-
-> **Aviso:** El uso de bots puede violar los Terminos de Servicio de Ankama. Usar bajo tu propio riesgo y solo en cuentas personales/privadas.
+Solo para gente via
 
 ---
 
