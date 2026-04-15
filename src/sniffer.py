@@ -271,13 +271,21 @@ def _classify_map_actor(actor_id: str, operation: str, sprite_type: int | None, 
         return "mob_group"
     if sprite_type in {-1, -2}:
         return "fight_marker"
+
+    is_negative_actor_id = False
     actor = str(actor_id).strip()
     if actor.lstrip("+-").isdigit():
         try:
             if int(actor) < 0:
-                return "mob"
+                is_negative_actor_id = True
         except ValueError:
             pass
+
+    # Heurística para mob individual: ID de actor negativo Y sprite positivo (template_id del mob).
+    # NPCs a menudo tienen ID y sprite negativos.
+    if is_negative_actor_id and sprite_type is not None and sprite_type > 0:
+        return "mob"
+
     extras_joined = ";".join(part.strip() for part in extras if part.strip())
     if "monster" in extras_joined.lower():
         return "mob"
@@ -320,21 +328,38 @@ def _parse_game_map_actors(data: str) -> list[dict]:
                 "raw": raw_entry[:420],
             })
             continue
-        if len(parts) < 4:
+        if len(parts) < 3:
             continue
         try:
             cell_id = int(parts[0].strip())
         except ValueError:
             continue
         direction = parts[1].strip() if len(parts) > 1 else ""
-        actor_id = parts[3].strip() if len(parts) > 3 else ""
-        extras = [part.strip() for part in parts[4:]]
+        # Formato largo (jugadores, mobs): cell;dir;unknown;actor_id;...  → actor en parts[3]
+        # Formato corto (NPCs/cajero):      cell;dir;actor_id;...          → actor en parts[2]
+        # Distinción: en formato corto parts[2] es negativo (NPC ID como -1).
+        # En formato largo parts[2] es orientación (0-7) y actor_id está en parts[3].
+        p2 = parts[2].strip()
+        try:
+            p2_int = int(p2)
+            is_npc_format = p2_int < 0
+        except ValueError:
+            is_npc_format = False
+        if len(parts) >= 4 and not is_npc_format:
+            actor_id = parts[3].strip()
+            extras = [part.strip() for part in parts[4:]]
+        else:
+            # Formato corto: actor_id en parts[2]
+            actor_id = p2
+            extras = [part.strip() for part in parts[3:]]
         if not actor_id:
             continue
         sprite_type: int | None = None
         sprite_raw = ""
-        if len(parts) > 5:
-            sprite_type, sprite_raw = _parse_sprite_type(parts[5])
+        # Formato largo: sprite en parts[5]; formato corto (NPC): sprite en parts[3]
+        sprite_field_idx = 5 if (len(parts) >= 4 and not is_npc_format) else 3
+        if len(parts) > sprite_field_idx:
+            sprite_type, sprite_raw = _parse_sprite_type(parts[sprite_field_idx])
         template_ids: list[int] = []
         levels: list[int] = []
         mob_signature = ""

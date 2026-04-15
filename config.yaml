@@ -56,876 +56,925 @@ bot:
       '1004':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '1005':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '1006':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '177':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '1856':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '1857':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '1858':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '1859':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '1868':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '1869':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '2023':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '206':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '207':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '2073':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '2074':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '2081':
         canvas_height: 344
         canvas_width: 640
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '2083':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '2084':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '210':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '211':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '212':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '213':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '214':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '2145':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '215':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '2169':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '217':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '249':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '250':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
+      '271':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 19.85
+        cell_width: 39.7
+        offset_x: 97.0
+        offset_y: -8.5
+      '2966':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 19.85
+        cell_width: 39.7
+        offset_x: 97.0
+        offset_y: -8.5
       '298':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '300':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
+      '3006':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 19.85
+        cell_width: 39.7
+        offset_x: 97.0
+        offset_y: -8.5
+      '3022':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 19.85
+        cell_width: 39.7
+        offset_x: 97.0
+        offset_y: -8.5
       '303':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '304':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3656':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3657':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3658':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3659':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3660':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3697':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3698':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3699':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3700':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3701':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3702':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3703':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3704':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3705':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3706':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3707':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '3708':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '406':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '407':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4207':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4209':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4459':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4472':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4495':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4496':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4498':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4499':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4529':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4531':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4533':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '4534':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '477':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '482':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '485':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '486':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '489':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '490':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '492':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '493':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '494':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '495':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '496':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '50':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '52':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '521':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '522':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '527':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '558':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '559':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '560':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '561':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '6367':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '670':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '671':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '673':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '674':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '677':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '6942':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '6952':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '6954':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7314':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7329':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7332':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7346':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7363':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7394':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7395':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7397':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '741':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7410':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7411':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7412':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7413':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7414':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7415':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7416':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7417':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
+      '7428':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 19.85
+        cell_width: 39.7
+        offset_x: 97.0
+        offset_y: -8.5
+      '7430':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 19.85
+        cell_width: 39.7
+        offset_x: 97.0
+        offset_y: -8.5
       '7434':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
+      '7516':
+        canvas_height: 422
+        canvas_width: 784
+        cell_height: 19.85
+        cell_width: 39.7
+        offset_x: 97.0
+        offset_y: -8.5
       '7549':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '7799':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '943':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '944':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '945':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '946':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '947':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '948':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '9505':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '9508':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '9509':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '954':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
       '955':
         canvas_height: 422
         canvas_width: 784
-        cell_height: 20.3
-        cell_width: 39.5
+        cell_height: 19.85
+        cell_width: 39.7
         offset_x: 97.0
-        offset_y: -11.0
+        offset_y: -8.5
     visual_grid_global:
-      cell_height: 20.3
-      cell_width: 39.5
+      cell_height: 19.85
+      cell_width: 39.7
       offset_x: 97.0
-      offset_y: -11.0
+      offset_y: -8.5
     world_map_samples_by_map_id:
       '671':
       - cell_id: 209
@@ -966,20 +1015,20 @@ bot:
   combat_pa: 6
   combat_placement_settle_delay: 2.0
   combat_poll_interval: 0.75
-  combat_poll_interval_max: 0.35
-  combat_poll_interval_min: 0.25
+  combat_poll_interval_max: 0.25
+  combat_poll_interval_min: 0.15
   combat_popup_close_delay: 0.08
   combat_popup_retry_delay: 0.1
   combat_post_click_delay: 0.05
-  combat_post_click_delay_max: 0.05
-  combat_post_click_delay_min: 0.05
+  combat_post_click_delay_max: 0.3
+  combat_post_click_delay_min: 0.1
   combat_pre_capture_delay: 0.03
   combat_pre_spell_pause: 0.03
   combat_profile: Sadida
   combat_ready_delay: 0.12
   combat_spell_pa_cost: 3
   combat_spell_select_delay: 0.05
-  combat_spell_select_delay_max: 0.05
+  combat_spell_select_delay_max: 0.1
   combat_spell_select_delay_min: 0.05
   combat_turn_cooldown: 0.25
   combat_turn_cooldown_max: 0.25
@@ -1206,6 +1255,10 @@ leveling:
   join_external_fights_actor_id: '16812'
   join_external_fights_any: true
   mobs:
+    Arakna:
+      enabled: true
+      template_ids:
+      - 52
     Arakna Mayor:
       enabled: false
       ignore: false
@@ -1251,6 +1304,15 @@ leveling:
       ignore: false
       template_ids:
       - 101
+    Jefe Jalato:
+      enabled: true
+      ignore: false
+      template_ids:
+      - 148
+    Jefe Jalato de Guerra:
+      enabled: true
+      template_ids:
+      - 148
     Pastor Puercazo:
       enabled: false
       ignore: false
@@ -1266,6 +1328,10 @@ leveling:
       ignore: false
       template_ids:
       - 442
+    Tofu:
+      enabled: true
+      template_ids:
+      - 98
   route_profile: FarmJalato
   template_id_db:
     '101': Jalato
@@ -1273,6 +1339,7 @@ leveling:
     '113': Drago Cerdo
     '115': Boo
     '134': Jalatin Blanco
+    '148': Jefe Jalato de Guerra
     '149': Jalatin Negro
     '159': Minilubo
     '259': Arakna Mayor
@@ -1284,6 +1351,7 @@ leveling:
     '52': Arakna
     '59': Champi Champ
     '63': Cangrejo
+    '98': Tofu
 navigation:
   empty_scans_before_move: 6
   enabled: true
@@ -1369,6 +1437,6 @@ teleport_profiles:
     dest_image: LaCuna
     expected_map: '1869'
     farm_map: '1869'
-    mobs_activate: 101,134,149,48
+    mobs_activate: 101,134,149,48,98,148,52
     route_name: FarmJalato
     trigger_map: '7411'

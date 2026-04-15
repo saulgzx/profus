@@ -37,20 +37,30 @@ Por cada hechizo que use el bot, necesito sus estadísticas exactas a nivel en e
 - **Cooldown (Tiempo de relanzamiento):** (Ej. 0 turnos, o 4 turnos para Potencia Silvestre)
 - **Límites por turno:** (Ej. Máximo 2 veces por objetivo, o 3 veces por turno en total).
 
+## R1. Vamos primero con el sadida:
+| Nombre             | Tecla | Costo de PA | Alcance mínimo | Alcance máximo | ¿Alcance modificable? | ¿Requiere línea de visión? | ¿Lanzamiento en línea recta? | Cooldown | Límite por turno |
+|--------------------|-------|-------------|----------------|----------------|------------------------|-----------------------------|-------------------------------|----------|------------------|
+| Zarza              | 5     | 4           | 1              | 8              | Sí                     | Sí                          | No                            | 0        | 2                |
+| Potencia Silvestre | 3     | 3           | 0              | 0              | No                     | Sí                          | Selfpos                       | 11       | n/a              |
+| La Sacrificada     | 4     | 3           | 1              | 1              | No                     | Sí                          | Sí                            | 2        | 1                |
+| Temblor            | 1     | 2           | 0              | 0              | No                     | No                          | No                            | 5        | 1                |
+| Viento Envenenado  | 2     | 3           | 0              | 0              | No                     | No                          | No                            | 7        | 1                |
+
 ### 2. Definición Exacta de los Combos
 Dime exactamente cómo se componen el Combo 1 y el Combo 2, y sus condiciones.
 
-**Ejemplo (Sadida):**
+
+## R2. Sadida
 - **Combo 1 (Prioridad Máxima):** Temblor + Viento Envenenado + Potencia Silvestre. 
   - *Condición:* Requiere 8 PA. Solo se lanza si Potencia Silvestre no está en cooldown.
   - *Target:* A sí mismo.
+  - Si algun hechizo falla, se debe repetir el mismo hechizo
+  - si no dan los PA para lanzar Potencia Silvestre, lanzarlo en el siguiente turno
 - **Combo 2 (Secundario):** La Sacrificada + Zarza x(N).
-  - *Condición:* Si Combo 1 está en CD. Sacrificada a 1 celda libre cerca del enemigo. Zarza al enemigo con menos HP.
+  - *Condición:* Si Combo 1 está en CD. Sacrificada a 1 celda libre cerca del enemigo. Zarza al enemigo con menos HP. (zarza debe lanzarse en la celda del personaje enemigo más cercano)
 
 ### 3. Comportamiento de Movimiento (Comportamiento Base)
 ¿Qué debe hacer el bot si le sobran PM o si no puede atacar?
-- **Rushear:** Gastar todos los PM para acercarse al enemigo más cercano.
-- **Kitear (Huir):** Gastar todos los PM para alejarse lo más posible (útil para el Sadida cuando lanza venenos).
 - **Estático:** No moverse si no es necesario para atacar.
 
 ### 4. (Opcional pero Recomendado) Log del Sniffer

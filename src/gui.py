@@ -56,15 +56,19 @@ def _list_mobs():
 CONFIG_PATH   = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
 GUI_ERROR_LOG = os.path.join(os.path.dirname(__file__), "..", "gui_error.log")
 
-BG      = "#1a1a2e"
-PANEL   = "#16213e"
-ACCENT  = "#0f3460"
-GREEN   = "#4ecca3"
-RED     = "#e94560"
-YELLOW  = "#f5a623"
-BLUE    = "#4a9eff"
-TEXT    = "#eaeaea"
-SUBTEXT = "#8892a4"
+BG      = "#0E0E12"   # BgDeep
+PANEL   = "#16161C"   # BgPanel
+CARD    = "#1E1E28"   # BgCard
+HOVER   = "#282836"   # BgHover
+ACCENT  = "#2277CC"   # AccentDim  (usado en paneles/botones)
+BLUE    = "#44AAFF"   # Accent (highlight)
+GREEN   = "#44FF88"   # Success
+RED     = "#FF4444"   # Danger
+YELLOW  = "#FFCC44"   # Warning
+TEXT    = "#E8E8EE"   # TextPrimary
+SUBTEXT = "#888899"   # TextSecondary
+DIM     = "#555566"   # TextDim
+BORDER  = "#2E2E3A"   # Border
 
 
 def _should_emit_runtime_log(msg: str) -> bool:
@@ -93,8 +97,14 @@ def _should_emit_runtime_log(msg: str) -> bool:
 
 
 def load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        data = {}
+    for key in ("bot", "farming", "game", "leveling", "navigation"):
+        data.setdefault(key, {})
+    return data
 
 def save_config(config):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -133,7 +143,7 @@ class ResourceCaptureWindow(tk.Toplevel):
         btn_frame = tk.Frame(top, bg=BG)
         btn_frame.pack(side="right")
 
-        tk.Button(btn_frame, text="Nuevo screenshot", bg=ACCENT, fg=TEXT,
+        tk.Button(btn_frame, text="Nuevo screenshot", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 9), relief="flat", padx=10, pady=4,
                   cursor="hand2", command=self._take_screenshot).pack(side="left", padx=(0, 6))
 
@@ -170,7 +180,8 @@ class ResourceCaptureWindow(tk.Toplevel):
         self.withdraw()
         time.sleep(0.4)
         with mss.mss() as sct:
-            monitor = sct.monitors[self.monitor_index]
+            idx = self.monitor_index if self.monitor_index < len(sct.monitors) else 1
+            monitor = sct.monitors[idx]
             shot = sct.grab(monitor)
             self._screenshot = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         self.deiconify()
@@ -409,8 +420,8 @@ class App(tk.Tk):
         self.title("Dofus AutoFarm")
         self.configure(bg=BG)
         self.resizable(True, True)
-        self._place_window_on_monitor(480, 780, monitor_index=2)
-        self.minsize(420, 500)
+        self._place_window_on_monitor(1100, 720, monitor_index=2)
+        self.minsize(800, 500)
         self.config_data = load_config()
         self.bot_thread = None
         self.log_queue = queue.Queue()
@@ -511,6 +522,8 @@ class App(tk.Tk):
 
         self._setup_hotkeys()
         self._build_ui()
+        # Colapsar módulo principal por defecto para dar más espacio a las tabs
+        self.after_idle(lambda: self._set_main_module_collapsed(True))
         self.bind("<Configure>", self._schedule_responsive_layout)
         self.after_idle(self._apply_responsive_layout)
         self._poll_queue()
@@ -542,10 +555,20 @@ class App(tk.Tk):
 
     def _setup_hotkeys(self):
         def on_press(key):
-            if key == kb.Key.f10 and self.bot_thread:
-                self.bot_thread.pause()
-            elif key == kb.Key.f12:
-                self._toggle_bot()
+            try:
+                if key == kb.Key.f8:
+                    # F8: pausa / reanuda (thread-safe via after)
+                    if self.bot_thread:
+                        self.after(0, self._pause_bot)
+                elif key == kb.Key.f10:
+                    # F10: detener completamente (thread-safe via after)
+                    if self.bot_thread:
+                        self.after(0, self._stop_bot)
+                elif key == kb.Key.f12:
+                    # F12: iniciar / detener
+                    self.after(0, self._toggle_bot)
+            except Exception as e:
+                print(f"[HOTKEY] Error en listener: {e}")
         listener = kb.Listener(on_press=on_press)
         listener.daemon = True
         listener.start()
@@ -558,25 +581,26 @@ class App(tk.Tk):
         """Crea una seccion colapsable. Devuelve (header_frame, content_frame)."""
         state = {"collapsed": start_collapsed}
 
-        header = tk.Frame(parent, bg=BG)
+        parent_bg = parent.cget("bg") if hasattr(parent, "cget") else BG
+        header = tk.Frame(parent, bg=parent_bg)
         header.pack(fill="x", pady=(6, 0))
 
         arrow = "▶" if start_collapsed else "▼"
-        lbl = tk.Label(header, text=f"{arrow} {title}", bg=BG, fg=TEXT,
-                       font=("Segoe UI", 10, "bold"), cursor="hand2")
+        lbl = tk.Label(header, text=f"{arrow} {title.upper()}", bg=parent_bg, fg=SUBTEXT,
+                       font=("Segoe UI", 9), cursor="hand2")
         lbl.pack(side="left")
 
-        content = tk.Frame(parent, bg=BG)
+        content = tk.Frame(parent, bg=parent_bg)
         if not start_collapsed:
             content.pack(fill="x", pady=(4, 0))
 
         def toggle(e=None):
             if state["collapsed"]:
                 content.pack(fill="x", pady=(4, 0))
-                lbl.config(text=f"▼ {title}")
+                lbl.config(text=f"▼ {title.upper()}")
             else:
                 content.pack_forget()
-                lbl.config(text=f"▶ {title}")
+                lbl.config(text=f"▶ {title.upper()}")
             state["collapsed"] = not state["collapsed"]
 
         lbl.bind("<Button-1>", toggle)
@@ -659,10 +683,66 @@ class App(tk.Tk):
             return None
         return self._scroll_canvas_from_event(canvas, ev)
 
+    def _make_tab_detachable(self, notebook, tab, title: str):
+        """Agrega funcionalidad de detach/reattach a un frame de tab.
+        Añade un botón ⤢ overlay en la esquina superior derecha del tab."""
+        state = {"detached": False}
+
+        btn_pop = tk.Button(
+            tab, text="⤢", bg=CARD, fg=DIM,
+            font=("Segoe UI", 8), relief="flat", padx=4, pady=1,
+            cursor="hand2", bd=0, highlightthickness=0,
+            activebackground=HOVER, activeforeground=TEXT,
+        )
+        # Colocar en esquina superior derecha con place
+        btn_pop.place(relx=1.0, y=2, anchor="ne", x=-2)
+
+        def _detach():
+            if state["detached"]:
+                return
+            state["detached"] = True
+            notebook.forget(tab)
+            try:
+                tab.tk.call("wm", "manage", tab)
+                tab.tk.call("wm", "protocol", tab, "WM_DELETE_WINDOW",
+                            tab.register(_reattach))
+            except Exception:
+                pass
+            tab.wm_title(f"Dofus AutoFarm — {title}")
+            tab.wm_geometry("1000x700")
+            tab.wm_minsize(600, 400)
+            tab.lift()
+            btn_pop.config(text="✕ Reinsertar", command=_reattach)
+
+        def _reattach():
+            if not state["detached"]:
+                return
+            state["detached"] = False
+            try:
+                tab.tk.call("wm", "forget", tab)
+            except Exception:
+                pass
+            notebook.add(tab, text=f"  {title}  ")
+            notebook.select(tab)
+            btn_pop.config(text="⤢", command=_detach)
+
+        btn_pop.config(command=_detach)
+
+    def _make_direct_tab(self, notebook, title: str):
+        """Tab con fill=both directo (sin canvas scroll interno).
+        Devuelve el frame contenedor."""
+        tab = tk.Frame(notebook, bg=BG)
+        notebook.add(tab, text=f"  {title}  ")
+        self._make_tab_detachable(notebook, tab, title)
+        content = tk.Frame(tab, bg=BG)
+        content.pack(fill="both", expand=True)
+        return content
+
     def _make_scrollable_tab(self, notebook, title: str):
         """Crea una pestaña con canvas scrolleable. Devuelve (tab_frame, body_frame)."""
         tab = tk.Frame(notebook, bg=BG)
         notebook.add(tab, text=f"  {title}  ")
+        self._make_tab_detachable(notebook, tab, title)
 
         canvas = tk.Canvas(tab, bg=BG, highlightthickness=0)
         vscroll = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
@@ -680,56 +760,78 @@ class App(tk.Tk):
         return tab, body
 
     def _build_ui(self):
-        # ── Header fijo ──────────────────────────────────────────────────
-        header = tk.Frame(self, bg=ACCENT, pady=8)
+        # ── Header fijo (estilo v2: PANEL bg + border-bottom) ────────────
+        header = tk.Frame(self, bg=PANEL, pady=0)
         header.pack(fill="x")
         self._header_frame = header
 
-        left = tk.Frame(header, bg=ACCENT)
-        left.pack(side="left", padx=12)
-        self._header_left = left
-        tk.Label(left, text="Dofus AutoFarm", bg=ACCENT, fg=TEXT,
-                 font=("Segoe UI", 13, "bold")).pack(anchor="w")
-        tk.Label(left, text="F10 Pausa  |  F12 Iniciar/Detener", bg=ACCENT, fg=SUBTEXT,
-                 font=("Segoe UI", 7)).pack(anchor="w")
+        # Borde inferior del header
+        tk.Frame(header, bg=BORDER, height=1).pack(fill="x", side="bottom")
 
-        right = tk.Frame(header, bg=ACCENT)
-        right.pack(side="right", padx=12)
+        inner = tk.Frame(header, bg=PANEL, pady=10)
+        inner.pack(fill="x")
+
+        # Columna izquierda: logo
+        left = tk.Frame(inner, bg=PANEL)
+        left.pack(side="left", padx=14)
+        self._header_left = left
+        tk.Label(left, text="DOFUS AUTOFARM", bg=PANEL, fg=BLUE,
+                 font=("Segoe UI", 14, "bold")).pack(anchor="w")
+
+        # Columna central: dot de estado + texto
+        center = tk.Frame(inner, bg=PANEL)
+        center.pack(side="left", padx=12, fill="x", expand=True)
+        self._header_status_dot = tk.Label(center, text="●", bg=PANEL, fg=RED,
+                                           font=("Segoe UI", 9))
+        self._header_status_dot.pack(side="left")
+        self._header_status_lbl = tk.Label(center, text="Detenido", bg=PANEL, fg=TEXT,
+                                            font=("Segoe UI", 10, "bold"))
+        self._header_status_lbl.pack(side="left", padx=(4, 0))
+        self._header_info_lbl = tk.Label(center, text="", bg=PANEL, fg=SUBTEXT,
+                                          font=("Segoe UI", 9))
+        self._header_info_lbl.pack(side="left", padx=(8, 0))
+
+        # Columna derecha: botones (TEST | ▶ INICIAR | ⏸ PAUSAR)
+        right = tk.Frame(inner, bg=PANEL)
+        right.pack(side="right", padx=14)
         self._header_right = right
-        self.btn_test = tk.Button(right, text="Iniciar TEST", bg=BLUE, fg=BG,
-                                  font=("Segoe UI", 10, "bold"),
-                                  relief="flat", padx=16, pady=6,
+        self.btn_test = tk.Button(right, text="TEST", bg=CARD, fg=SUBTEXT,
+                                  font=("Segoe UI", 9, "bold"),
+                                  relief="flat", padx=12, pady=5,
+                                  bd=1, highlightthickness=1,
+                                  highlightbackground=BORDER,
                                   cursor="hand2", command=self._start_test_mode)
         self.btn_test.pack(side="left", padx=(0, 6))
-        self.btn_toggle = tk.Button(right, text="▶  Iniciar", bg=GREEN, fg=BG,
-                                    font=("Segoe UI", 10, "bold"),
-                                    relief="flat", padx=16, pady=6,
+        self.btn_toggle = tk.Button(right, text="▶  INICIAR", bg=ACCENT, fg="white",
+                                    font=("Segoe UI", 9, "bold"),
+                                    relief="flat", padx=14, pady=5,
+                                    bd=1, highlightthickness=1,
+                                    highlightbackground=BLUE,
                                     cursor="hand2", command=self._toggle_bot)
         self.btn_toggle.pack(side="left", padx=(0, 6))
-        self.btn_pause = tk.Button(right, text="⏸  Pausar", bg=YELLOW, fg=BG,
-                                   font=("Segoe UI", 10, "bold"),
-                                   relief="flat", padx=16, pady=6,
+        self.btn_pause = tk.Button(right, text="⏸  PAUSAR", bg=CARD, fg=SUBTEXT,
+                                   font=("Segoe UI", 9, "bold"),
+                                   relief="flat", padx=14, pady=5,
+                                   bd=1, highlightthickness=1,
+                                   highlightbackground=BORDER,
                                    cursor="hand2", command=self._pause_bot,
                                    state="disabled")
         self.btn_pause.pack(side="left")
 
-        main_module = tk.Frame(self, bg=PANEL, padx=16, pady=10)
-        main_module.pack(fill="x")
-        self._main_module_frame = main_module
-        self._build_main_module(main_module)
-
-        # ── Notebook (pestañas) ───────────────────────────────────────────
+        # ── Notebook (pestañas — estilo v2) ──────────────────────────────
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure("Dark.TNotebook",
-                        background=BG, tabmargins=[2, 4, 2, 0])
+                        background=PANEL, tabmargins=[0, 0, 0, 0],
+                        borderwidth=0)
         style.configure("Dark.TNotebook.Tab",
-                        background=ACCENT, foreground=TEXT,
-                        font=("Segoe UI", 9, "bold"),
-                        padding=[12, 6])
+                        background=PANEL, foreground=SUBTEXT,
+                        font=("Segoe UI", 9),
+                        padding=[14, 8],
+                        borderwidth=0)
         style.map("Dark.TNotebook.Tab",
-                  background=[("selected", PANEL), ("active", "#1a2a50")],
-                  foreground=[("selected", GREEN)])
+                  background=[("selected", PANEL), ("active", HOVER)],
+                  foreground=[("selected", BLUE), ("active", TEXT)])
 
         notebook = ttk.Notebook(self, style="Dark.TNotebook")
         self._notebook = notebook
@@ -778,23 +880,21 @@ class App(tk.Tk):
         _, sniffer_body = self._make_scrollable_tab(notebook, "Sniffer")
         self._build_sniffer_tab(sniffer_body)
 
-        # ── Zona fija inferior (Control + Status + Log) ───────────────────
-        bottom = tk.Frame(self, bg=BG, padx=16, pady=6)
-        bottom.pack(fill="x", side="bottom")
-        self._bottom_frame = bottom
+        # ── Pestaña Logs (sin canvas scroll — el Text tiene el suyo) ────
+        logs_tab = self._make_direct_tab(notebook, "Logs")
+        self._build_log(logs_tab)
 
-        ttk.Separator(bottom, orient="horizontal").pack(fill="x", pady=(0, 6))
-        bottom_content = tk.Frame(bottom, bg=BG)
-        bottom_content.pack(fill="x")
-        controls_host = tk.Frame(bottom_content, bg=BG)
-        info_host = tk.Frame(bottom_content, bg=BG)
-        self._bottom_controls_host = controls_host
-        self._bottom_info_host = info_host
-        _, cnt = self._collapsible_section(controls_host, "Control")
-        self._build_controls(cnt)
-        ttk.Separator(info_host, orient="horizontal").pack(fill="x", pady=(0, 6))
-        self._build_status(info_host)
-        self._build_log(info_host)
+        # ── Pestaña Ajustes (configuración + controles) ──────────────────
+        _, ajustes_body = self._make_scrollable_tab(notebook, "Ajustes")
+        self._build_main_module(ajustes_body)
+        self._sep(ajustes_body)
+        self._build_controls(ajustes_body)
+
+        # ── Status bar delgada al fondo ──────────────────────────────────
+        status_bar = tk.Frame(self, bg=PANEL)
+        status_bar.pack(fill="x", side="bottom")
+        self._bottom_frame = status_bar
+        self._build_status(status_bar)
 
     def _build_resources(self, parent):
         self.resources_frame = tk.Frame(parent, bg=PANEL)
@@ -831,7 +931,7 @@ class App(tk.Tk):
                 active_resources = active_config.get(prof_name, {}).get("resources", [])
 
                 lf = tk.LabelFrame(self.resources_frame, text=f"  {prof_name}  ",
-                                   bg=PANEL, fg=GREEN,
+                                   bg=CARD, fg=BLUE,
                                    font=("Segoe UI", 9, "bold"), bd=1, relief="groove")
                 lf.pack(fill="x", padx=10, pady=(6, 2))
 
@@ -871,7 +971,7 @@ class App(tk.Tk):
                               command=lambda n=res_name, p=prof_name, lbl=lbl_count:
                                   self._check_resource(n, p, lbl)).pack(side="right", padx=(4, 0))
 
-                    tk.Button(row, text="Recapturar", bg=ACCENT, fg=SUBTEXT,
+                    tk.Button(row, text="Recapturar", bg=CARD, fg=SUBTEXT,
                               font=("Segoe UI", 7), relief="flat", padx=6, pady=2,
                               cursor="hand2",
                               command=lambda n=res_name, p=prof_name:
@@ -894,7 +994,7 @@ class App(tk.Tk):
         # Boton nueva profesion
         new_row = tk.Frame(self.resources_frame, bg=PANEL)
         new_row.pack(fill="x", padx=10, pady=(4, 6))
-        tk.Button(new_row, text="+ Nueva profesion", bg=ACCENT, fg=TEXT,
+        tk.Button(new_row, text="+ Nueva profesion", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=3,
                   cursor="hand2", command=self._new_profession).pack(side="left")
 
@@ -967,7 +1067,7 @@ class App(tk.Tk):
                  font=("Segoe UI", 9)).pack(side="left")
         tk.Label(top, textvariable=self._resource_node_map_var, bg=PANEL, fg=GREEN,
                  font=("Consolas", 10, "bold")).pack(side="left", padx=(6, 0))
-        tk.Button(top, text="Usar actual", bg=ACCENT, fg=TEXT,
+        tk.Button(top, text="Usar actual", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._use_current_map_id_for_nodes).pack(side="right")
 
@@ -994,7 +1094,7 @@ class App(tk.Tk):
             self._refresh_resource_node_resource_choices(),
             self._load_profession_wait(),
         ))
-        tk.Button(form, text="+", bg=ACCENT, fg=GREEN,
+        tk.Button(form, text="+", bg=CARD, fg=GREEN,
                   font=("Segoe UI", 9, "bold"), relief="flat", padx=6, pady=0,
                   cursor="hand2", command=self._new_profession_from_nodes
                   ).grid(row=0, column=2, padx=(4, 0))
@@ -1011,7 +1111,7 @@ class App(tk.Tk):
         )
         self._resource_node_res_cb.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
         self._resource_node_res_cb.bind("<<ComboboxSelected>>", lambda e: self._refresh_resource_node_sprite_preview())
-        tk.Button(form, text="+", bg=ACCENT, fg=GREEN,
+        tk.Button(form, text="+", bg=CARD, fg=GREEN,
                   font=("Segoe UI", 9, "bold"), relief="flat", padx=6, pady=0,
                   cursor="hand2", command=self._add_resource_to_profession
                   ).grid(row=1, column=2, padx=(4, 0), pady=(6, 0))
@@ -1025,7 +1125,7 @@ class App(tk.Tk):
             textvariable=self._resource_node_wait_var,
             from_=1.0, to=60.0, increment=0.5,
             width=7, font=("Segoe UI", 9),
-            bg=ACCENT, fg=TEXT, buttonbackground=ACCENT,
+            bg=CARD, fg=TEXT, buttonbackground=PANEL,
             relief="flat",
             command=self._save_profession_wait,
         )
@@ -1052,7 +1152,7 @@ class App(tk.Tk):
         sprite_frame.pack(fill="x", padx=10, pady=(0, 6))
         self._resource_node_sprite_label = tk.Label(
             sprite_frame,
-            bg=ACCENT,
+            bg=BG,
             width=72,
             height=72,
             relief="flat",
@@ -1079,10 +1179,10 @@ class App(tk.Tk):
 
         btns = tk.Frame(frame, bg=PANEL)
         btns.pack(fill="x", padx=10, pady=(4, 6))
-        tk.Button(btns, text="Capturar sprite", bg=ACCENT, fg=TEXT,
+        tk.Button(btns, text="Capturar sprite", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._capture_selected_resource_sprite).pack(side="left", padx=(0, 4))
-        tk.Button(btns, text="Recapturar sprite", bg=ACCENT, fg=SUBTEXT,
+        tk.Button(btns, text="Recapturar sprite", bg=CARD, fg=SUBTEXT,
                   font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._recapture_selected_resource_sprite).pack(side="left", padx=(0, 4))
         tk.Button(btns, text="Chequear sprite", bg=YELLOW, fg=BG,
@@ -1122,7 +1222,7 @@ class App(tk.Tk):
         self._resource_node_listbox = tk.Listbox(
             lb_frame,
             height=5,
-            bg=ACCENT,
+            bg=CARD,
             fg=TEXT,
             font=("Consolas", 9),
             relief="flat",
@@ -1214,34 +1314,36 @@ class App(tk.Tk):
         bot.combat_profile = load_profile(profile_name)
 
     def _build_main_module(self, parent):
-        title = tk.Label(parent, text="▼ Modulo principal", bg=PANEL, fg=GREEN,
-                         font=("Segoe UI", 10, "bold"), cursor="hand2")
+        pbg = parent.cget("bg") if hasattr(parent, "cget") else BG
+
+        title = tk.Label(parent, text="▼ MODULO PRINCIPAL", bg=pbg, fg=SUBTEXT,
+                         font=("Segoe UI", 9), cursor="hand2")
         title.pack(anchor="w")
         title.bind("<Button-1>", lambda _e: self._toggle_main_module())
         self._main_module_title_label = title
 
-        content = tk.Frame(parent, bg=PANEL)
+        content = tk.Frame(parent, bg=pbg)
         content.pack(fill="x")
         self._main_module_content = content
 
         tk.Label(
             content,
             text="Selecciona el Actor ID del PJ actual. Si cambias de personaje, actualizalo aqui.",
-            bg=PANEL,
+            bg=pbg,
             fg=SUBTEXT,
             font=("Segoe UI", 8),
             justify="left",
         ).pack(anchor="w", pady=(2, 8))
 
-        cards = tk.Frame(content, bg=PANEL)
+        cards = tk.Frame(content, bg=pbg)
         cards.pack(fill="x", pady=(0, 8))
         self._main_module_cards = cards
         self._build_main_summary_cards(cards)
 
-        actor_row = tk.Frame(content, bg=PANEL)
+        actor_row = tk.Frame(content, bg=pbg)
         actor_row.pack(fill="x")
         self._main_module_form = actor_row
-        actor_label = tk.Label(actor_row, text="Actor ID del PJ actual:", bg=PANEL, fg=TEXT,
+        actor_label = tk.Label(actor_row, text="Actor ID del PJ actual:", bg=pbg, fg=TEXT,
                                font=("Segoe UI", 9))
         actor_label.pack(side="left")
         self._actor_form_label = actor_label
@@ -1251,9 +1353,9 @@ class App(tk.Tk):
             actor_row,
             textvariable=self._primary_actor_id_var,
             width=16,
-            bg=BG,
+            bg=CARD,
             fg=TEXT,
-            insertbackground=TEXT,
+            insertbackground=BLUE,
             relief="flat",
             font=("Consolas", 10),
         )
@@ -1277,7 +1379,7 @@ class App(tk.Tk):
         self._primary_actor_status_var = tk.StringVar(
             value=f"Actual: {current_actor_id or 'sin configurar'}"
         )
-        tk.Label(content, textvariable=self._primary_actor_status_var, bg=PANEL, fg=SUBTEXT,
+        tk.Label(content, textvariable=self._primary_actor_status_var, bg=pbg, fg=SUBTEXT,
                  font=("Segoe UI", 8, "italic")).pack(anchor="w", pady=(6, 0))
 
     def _set_main_module_collapsed(self, collapsed: bool):
@@ -1287,9 +1389,9 @@ class App(tk.Tk):
             actor_value = self._main_runtime_actor_var.get() or "sin configurar"
             profile_value = self._main_runtime_profile_var.get() or "-"
             mode_value = self._main_runtime_mode_var.get() or "-"
-            summary = f"  |  actor={actor_value}  |  perfil={profile_value}  |  modo={mode_value}"
+            summary = f"  ·  actor={actor_value}  ·  perfil={profile_value}  ·  modo={mode_value}"
             self._main_module_title_label.config(
-                text=f"{arrow} Modulo principal{summary if self._main_module_collapsed else ''}"
+                text=f"{arrow} MODULO PRINCIPAL{summary if self._main_module_collapsed else ''}"
             )
         if self._main_module_content is not None:
             if self._main_module_collapsed:
@@ -1302,17 +1404,22 @@ class App(tk.Tk):
 
     def _build_main_summary_cards(self, parent):
         cards = [
-            ("Actor activo", self._main_runtime_actor_var, GREEN),
-            ("Perfil", self._main_runtime_profile_var, BLUE),
-            ("Modo", self._main_runtime_mode_var, YELLOW),
-            ("Map ID", self._main_runtime_map_var, TEXT),
-            ("Sniffer", self._main_runtime_sniffer_var, GREEN),
+            ("ACTOR ACTIVO", self._main_runtime_actor_var, GREEN),
+            ("PERFIL", self._main_runtime_profile_var, BLUE),
+            ("MODO", self._main_runtime_mode_var, YELLOW),
+            ("MAP ID", self._main_runtime_map_var, TEXT),
+            ("SNIFFER", self._main_runtime_sniffer_var, GREEN),
         ]
         for title, value_var, color in cards:
-            card = tk.Frame(parent, bg=BG, padx=10, pady=8, bd=1, relief="flat")
-            card.pack(side="left", fill="x", expand=True, padx=(0, 8))
-            tk.Label(card, text=title, bg=BG, fg=SUBTEXT, font=("Segoe UI", 8, "bold")).pack(anchor="w")
-            tk.Label(card, textvariable=value_var, bg=BG, fg=color, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(4, 0))
+            # Outer border frame
+            border = tk.Frame(parent, bg=BORDER, padx=1, pady=1)
+            border.pack(side="left", fill="x", expand=True, padx=(0, 8))
+            card = tk.Frame(border, bg=CARD, padx=10, pady=8)
+            card.pack(fill="both")
+            tk.Label(card, text=title, bg=CARD, fg=DIM,
+                     font=("Segoe UI", 8)).pack(anchor="w")
+            tk.Label(card, textvariable=value_var, bg=CARD, fg=color,
+                     font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(3, 0))
 
     def _schedule_responsive_layout(self, _event=None):
         if self._responsive_after_id is not None:
@@ -1342,10 +1449,9 @@ class App(tk.Tk):
                 self.btn_pause.pack_configure(side="left", fill="none", padx=0, pady=0)
 
         if self._main_module_content is not None:
+            # Solo colapsar automáticamente por ancho, no expandir (el usuario decide)
             if width < 700 and not self._main_module_collapsed:
                 self._set_main_module_collapsed(True)
-            elif width >= 700 and self._main_module_collapsed:
-                self._set_main_module_collapsed(False)
 
         if self._main_module_cards is not None:
             card_widgets = list(self._main_module_cards.winfo_children())
@@ -1370,15 +1476,8 @@ class App(tk.Tk):
                 self._actor_form_entry.pack(side="left", padx=(8, 6))
                 self._actor_form_button.pack(side="left")
 
-        if self._bottom_controls_host is not None and self._bottom_info_host is not None:
-            self._bottom_controls_host.pack_forget()
-            self._bottom_info_host.pack_forget()
-            if width < 980:
-                self._bottom_controls_host.pack(fill="x")
-                self._bottom_info_host.pack(fill="x", pady=(10, 0))
-            else:
-                self._bottom_controls_host.pack(side="left", fill="x", expand=True, padx=(0, 10))
-                self._bottom_info_host.pack(side="left", fill="both", expand=True)
+        # _bottom_controls_host es ahora un Frame dentro de los controles colapsables
+        # _bottom_info_host es la status bar fija — no necesita responsive management
 
         if self._sniffer_body_left is not None and self._sniffer_body_center is not None and self._sniffer_body_right is not None:
             self._sniffer_body_left.pack_forget()
@@ -1414,6 +1513,10 @@ class App(tk.Tk):
         self._main_runtime_mode_var.set(mode_value)
         self._main_runtime_map_var.set(map_value)
         self._main_runtime_sniffer_var.set(sniffer_value)
+        # Actualizar info del header (· perfil · map_id)
+        if hasattr(self, "_header_info_lbl") and self._header_info_lbl:
+            info = f"·  {profile_value}  ·  map:{map_value}"
+            self._header_info_lbl.config(text=info)
 
     def _refresh_resource_node_list(self):
         if self._resource_node_listbox is None:
@@ -1511,8 +1614,10 @@ class App(tk.Tk):
         def run():
             threshold = self.config_data["bot"].get("threshold", 0.55)
             detector = Detector(threshold=threshold)
-            monitor_idx = self.config_data["game"].get("monitor", 2)
+            monitor_idx = self.config_data.get("game", {}).get("monitor", 2)
             with mss.mss() as sct:
+                if monitor_idx >= len(sct.monitors):
+                    monitor_idx = 1
                 monitor = sct.monitors[monitor_idx]
                 shot = sct.grab(monitor)
                 frame = np.ascontiguousarray(np.array(shot)[:, :, :3])
@@ -1650,8 +1755,10 @@ class App(tk.Tk):
             from detector import Detector
             ui_threshold = self.config_data["bot"].get("ui_threshold", 0.85)
             detector = Detector(threshold=ui_threshold)
-            monitor_idx = self.config_data["game"].get("monitor", 2)
+            monitor_idx = self.config_data.get("game", {}).get("monitor", 2)
             with mss.mss() as sct:
+                if monitor_idx >= len(sct.monitors):
+                    monitor_idx = 1
                 monitor = sct.monitors[monitor_idx]
                 shot = sct.grab(monitor)
                 frame = np.ascontiguousarray(np.array(shot)[:, :, :3])
@@ -1689,7 +1796,7 @@ class App(tk.Tk):
                  font=("Segoe UI", 9)).pack(side="left")
         self._nav_scans_var = tk.StringVar(value=str(nav_cfg.get("empty_scans_before_move", 3)))
         spin = tk.Spinbox(cfg_row, from_=1, to=20, width=4, textvariable=self._nav_scans_var,
-                          bg=ACCENT, fg=TEXT, buttonbackground=ACCENT, relief="flat",
+                          bg=CARD, fg=TEXT, buttonbackground=PANEL, relief="flat",
                           command=self._save_navigation)
         spin.pack(side="left", padx=(6, 0))
         spin.bind("<FocusOut>", lambda e: self._save_navigation())
@@ -1718,8 +1825,8 @@ class App(tk.Tk):
                  font=("Segoe UI", 9)).pack(side="left")
         self._nav_map_id_var = tk.StringVar(value="")
         tk.Entry(map_route_row, textvariable=self._nav_map_id_var, width=10,
-                 bg=ACCENT, fg=TEXT, relief="flat",
-                 insertbackground=TEXT).pack(side="left", padx=(6, 4))
+                 bg=CARD, fg=TEXT, relief="flat",
+                 insertbackground=BLUE).pack(side="left", padx=(6, 4))
         tk.Button(map_route_row, text="Usar actual", bg=GREEN, fg=BG,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._nav_use_current_map_id).pack(side="left")
@@ -1731,7 +1838,7 @@ class App(tk.Tk):
 
         map_lb_frame = tk.Frame(map_list_row, bg=PANEL)
         map_lb_frame.pack(fill="x")
-        self._nav_map_route_listbox = tk.Listbox(map_lb_frame, height=6, bg=ACCENT, fg=TEXT,
+        self._nav_map_route_listbox = tk.Listbox(map_lb_frame, height=6, bg=CARD, fg=TEXT,
                                                  font=("Consolas", 9), relief="flat",
                                                  selectbackground=GREEN, selectforeground=BG,
                                                  activestyle="none")
@@ -1745,7 +1852,7 @@ class App(tk.Tk):
         tk.Button(map_btn_row, text="Guardar punto actual", bg=BLUE, fg=BG,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._nav_add_map_point).pack(side="left", padx=(0, 4))
-        tk.Button(map_btn_row, text="Capturar mouse map_id (3s)", bg=ACCENT, fg=TEXT,
+        tk.Button(map_btn_row, text="Capturar mouse map_id (3s)", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._nav_capture_mouse_for_map).pack(side="left", padx=(0, 4))
         tk.Button(map_btn_row, text="Eliminar map_id", bg=RED, fg=TEXT,
@@ -1760,7 +1867,7 @@ class App(tk.Tk):
             tk.Button(
                 exit_row,
                 text=label,
-                bg=ACCENT,
+                bg=CARD,
                 fg=TEXT,
                 font=("Segoe UI", 8),
                 relief="flat",
@@ -1786,7 +1893,7 @@ class App(tk.Tk):
         tk.Button(
             exit_row,
             text="Capturar Celda (3s)",
-            bg=ACCENT,
+            bg=CARD,
             fg=TEXT,
             font=("Segoe UI", 8),
             relief="flat",
@@ -1803,7 +1910,7 @@ class App(tk.Tk):
 
         lb_frame = tk.Frame(list_row, bg=PANEL)
         lb_frame.pack(fill="x")
-        self._route_listbox = tk.Listbox(lb_frame, height=4, bg=ACCENT, fg=TEXT,
+        self._route_listbox = tk.Listbox(lb_frame, height=4, bg=CARD, fg=TEXT,
                                          font=("Consolas", 9), relief="flat",
                                          selectbackground=GREEN, selectforeground=BG,
                                          activestyle="none")
@@ -1817,7 +1924,7 @@ class App(tk.Tk):
         tk.Button(btn_row, text="+ Agregar punto", bg=BLUE, fg=BG,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._nav_add_point).pack(side="left", padx=(0, 4))
-        tk.Button(btn_row, text="Capturar mouse (3s)", bg=ACCENT, fg=TEXT,
+        tk.Button(btn_row, text="Capturar mouse (3s)", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._nav_capture_mouse).pack(side="left", padx=(0, 4))
         tk.Button(btn_row, text="Eliminar", bg=RED, fg=TEXT,
@@ -2224,7 +2331,7 @@ class App(tk.Tk):
                 cb.pack(side="left", padx=(0, 6))
                 self._tp_route_cb = cb
             else:
-                tk.Entry(row, textvariable=str_var, bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat", font=("Segoe UI", 9), width=24).pack(side="left", padx=(0, 6))
+                tk.Entry(row, textvariable=str_var, bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat", font=("Segoe UI", 9), width=24).pack(side="left", padx=(0, 6))
             tk.Label(row, text=hint, bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8, "italic")).pack(side="left")
             
         tk.Button(editor_frame, text="Guardar Perfil", bg=GREEN, fg=BG, font=("Segoe UI", 9, "bold"), relief="flat", padx=12, pady=4, cursor="hand2", command=self._save_teleport_profile_from_editor).pack(pady=(6, 0))
@@ -2393,7 +2500,7 @@ class App(tk.Tk):
                                                state="readonly", width=22, values=route_names)
         self._leveling_route_cb.pack(side="left", padx=(6, 4))
         self._leveling_route_cb.bind("<<ComboboxSelected>>", lambda e: self._save_leveling_route_profile())
-        tk.Button(route_row, text="Guardar", bg=ACCENT, fg=TEXT,
+        tk.Button(route_row, text="Guardar", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
                   cursor="hand2", command=self._save_leveling_route_profile).pack(side="left")
         self._leveling_route_toggle_btn = tk.Button(
@@ -2415,7 +2522,7 @@ class App(tk.Tk):
         tk.Label(settings_header, text="Ajustes de auto-nivel", bg=PANEL, fg=YELLOW,
                  font=("Segoe UI", 9, "bold")).pack(side="left")
         search_entry = tk.Entry(settings_header, textvariable=self._mob_search_var, width=22,
-                                bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                                bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
                                 font=("Segoe UI", 8))
         search_entry.pack(side="right", padx=(0, 4))
         self._mob_search_entry = search_entry
@@ -2435,8 +2542,8 @@ class App(tk.Tk):
         else:
             veto_str = str(veto_raw)
         self._mob_veto_template_ids_var = tk.StringVar(value=veto_str)
-        tk.Entry(veto_row, textvariable=self._mob_veto_template_ids_var, width=18, bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(6, 4))
-        tk.Button(veto_row, text="Guardar veto", bg=ACCENT, fg=TEXT, font=("Segoe UI", 7), relief="flat", padx=6, pady=1, cursor="hand2", command=self._save_mob_group_veto_template_ids).pack(side="left")
+        tk.Entry(veto_row, textvariable=self._mob_veto_template_ids_var, width=18, bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(6, 4))
+        tk.Button(veto_row, text="Guardar veto", bg=CARD, fg=TEXT, font=("Segoe UI", 7), relief="flat", padx=6, pady=1, cursor="hand2", command=self._save_mob_group_veto_template_ids).pack(side="left")
 
 
         mobs = _list_mobs()
@@ -2542,9 +2649,9 @@ class App(tk.Tk):
                 template_var = tk.StringVar(value=template_text)
                 self.mob_template_vars[mob_name] = template_var
                 tk.Entry(row2, textvariable=template_var, width=18,
-                         bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                         bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
                          font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
-                tk.Button(row2, text="Guardar IDs", bg=ACCENT, fg=TEXT,
+                tk.Button(row2, text="Guardar IDs", bg=CARD, fg=TEXT,
                           font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
                           cursor="hand2",
                           command=lambda n=mob_name: self._save_mob_template_ids(n)).pack(side="left")
@@ -2565,7 +2672,7 @@ class App(tk.Tk):
         # ── Botón nuevo mob ───────────────────────────────────────────────
         new_row = tk.Frame(self.mobs_frame, bg=BG)
         new_row.pack(fill="x", padx=10, pady=(4, 6))
-        tk.Button(new_row, text="+ Nuevo mob", bg=ACCENT, fg=TEXT,
+        tk.Button(new_row, text="+ Nuevo mob", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=3,
                   cursor="hand2", command=self._new_mob).pack(side="left")
 
@@ -2607,17 +2714,17 @@ class App(tk.Tk):
         tk.Label(mobs_form, text="Template ID:", bg=PANEL, fg=SUBTEXT,
                  font=("Segoe UI", 8)).pack(side="left")
         tk.Entry(mobs_form, textvariable=self._template_db_id_var, width=10,
-                 bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
                  font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
         tk.Label(mobs_form, text="Nombre:", bg=PANEL, fg=SUBTEXT,
                  font=("Segoe UI", 8)).pack(side="left", padx=(4, 0))
         tk.Entry(mobs_form, textvariable=self._template_db_name_var, width=22,
-                 bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
                  font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
         tk.Button(mobs_form, text="Guardar en base", bg=GREEN, fg=BG,
                   font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
                   cursor="hand2", command=self._save_template_db_entry).pack(side="left")
-        tk.Button(mobs_form, text="Refrescar", bg=ACCENT, fg=TEXT,
+        tk.Button(mobs_form, text="Refrescar", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
                   cursor="hand2", command=self._refresh_database_tab).pack(side="left", padx=(4, 0))
         mobs_text_frame = tk.Frame(mobs_box, bg=PANEL)
@@ -2660,17 +2767,17 @@ class App(tk.Tk):
         tk.Label(players_form, text="Actor ID:", bg=PANEL, fg=SUBTEXT,
                  font=("Segoe UI", 8)).pack(side="left")
         tk.Entry(players_form, textvariable=self._player_db_id_var, width=10,
-                 bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
                  font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
         tk.Label(players_form, text="Nombre:", bg=PANEL, fg=SUBTEXT,
                  font=("Segoe UI", 8)).pack(side="left", padx=(4, 0))
         tk.Entry(players_form, textvariable=self._player_db_name_var, width=22,
-                 bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
                  font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
         tk.Button(players_form, text="Guardar en base", bg=GREEN, fg=BG,
                   font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
                   cursor="hand2", command=self._save_player_db_entry).pack(side="left")
-        tk.Button(players_form, text="Refrescar", bg=ACCENT, fg=TEXT,
+        tk.Button(players_form, text="Refrescar", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
                   cursor="hand2", command=self._refresh_database_tab).pack(side="left", padx=(4, 0))
         players_text_frame = tk.Frame(players_box, bg=PANEL)
@@ -2931,8 +3038,10 @@ class App(tk.Tk):
 
         threshold = float(self.config_data["bot"].get("pj_threshold", 0.40) or 0.40)
         detector = Detector(threshold=threshold)
-        monitor_idx = self.config_data["game"].get("monitor", 2)
+        monitor_idx = self.config_data.get("game", {}).get("monitor", 2)
         with mss.mss() as sct:
+            if monitor_idx >= len(sct.monitors):
+                monitor_idx = 1
             monitor = sct.monitors[monitor_idx]
             shot = sct.grab(monitor)
             frame = np.ascontiguousarray(np.array(shot)[:, :, :3])
@@ -3295,8 +3404,10 @@ class App(tk.Tk):
             from detector import Detector
             threshold = self.config_data["bot"].get("threshold", 0.55)
             detector  = Detector(threshold=threshold)
-            monitor_idx = self.config_data["game"].get("monitor", 2)
+            monitor_idx = self.config_data.get("game", {}).get("monitor", 2)
             with mss.mss() as sct:
+                if monitor_idx >= len(sct.monitors):
+                    monitor_idx = 1
                 monitor = sct.monitors[monitor_idx]
                 shot    = sct.grab(monitor)
                 frame   = np.ascontiguousarray(np.array(shot)[:, :, :3])
@@ -3426,8 +3537,10 @@ class App(tk.Tk):
             from detector import Detector
             threshold = self.config_data["bot"].get("threshold", 0.55)
             detector = Detector(threshold=threshold)
-            monitor_idx = self.config_data["game"].get("monitor", 2)
+            monitor_idx = self.config_data.get("game", {}).get("monitor", 2)
             with mss.mss() as sct:
+                if monitor_idx >= len(sct.monitors):
+                    monitor_idx = 1
                 monitor = sct.monitors[monitor_idx]
                 shot = sct.grab(monitor)
                 frame = np.ascontiguousarray(np.array(shot)[:, :, :3])
@@ -3509,8 +3622,8 @@ class App(tk.Tk):
                     values.append(int(token))
                 except ValueError:
                     messagebox.showwarning(
-                        "Template ID inv?lido",
-                        f"'{token}' no es un entero v?lido. Usa Template IDs separados por coma.",
+                        "Template ID inválido",
+                        f"'{token}' no es un entero válido. Usa Template IDs separados por coma.",
                         parent=self,
                     )
                     return
@@ -3519,7 +3632,7 @@ class App(tk.Tk):
         save_config(self.config_data)
         self.config_data = load_config()
         self._sync_runtime_bot_config()
-        rendered = ", ".join(str(v) for v in values) if values else "(vac?o)"
+        rendered = ", ".join(str(v) for v in values) if values else "(vacío)"
         self.log_queue.put(("log", f"[MOBS] veto de grupos por template_id guardado: {rendered}"))
 
     def _save_ignore_single_mob_groups(self):
@@ -4222,7 +4335,7 @@ class App(tk.Tk):
             seeded = self._ensure_visual_grid_saved_for_map(int(map_id), int(resized.width), int(resized.height))
             settings = self._get_visual_grid_settings(map_id, resized.width, resized.height)
             self._sniffer_grid_cell_width_var.set(settings["cell_width"])
-            self._sniffer_grid_cell_height_var.set(settings["cell_height"])
+            self._sniffer_grid_cell_height_var.set(round(settings["cell_width"] / 2.0, 2))
             self._sniffer_grid_offset_x_var.set(settings["offset_x"])
             self._sniffer_grid_offset_y_var.set(settings["offset_y"])
             self._sniffer_grid_last_map_id = map_id
@@ -4377,8 +4490,10 @@ class App(tk.Tk):
 
     def _apply_sniffer_grid_entry_values(self):
         try:
-            self._sniffer_grid_cell_width_var.set(float((self._sniffer_grid_cell_width_entry_var.get() or "0").replace(",", ".")))
-            self._sniffer_grid_cell_height_var.set(float((self._sniffer_grid_cell_height_entry_var.get() or "0").replace(",", ".")))
+            w = float((self._sniffer_grid_cell_width_entry_var.get() or "0").replace(",", "."))
+            h = round(w / 2.0, 2)
+            self._sniffer_grid_cell_width_var.set(w)
+            self._sniffer_grid_cell_height_var.set(h)
             self._sniffer_grid_offset_x_var.set(float((self._sniffer_grid_offset_x_entry_var.get() or "0").replace(",", ".")))
             self._sniffer_grid_offset_y_var.set(float((self._sniffer_grid_offset_y_entry_var.get() or "0").replace(",", ".")))
         except ValueError:
@@ -4542,7 +4657,7 @@ class App(tk.Tk):
                   cursor="hand2",
                   command=lambda: self._copy_sniffer_snapshot(self._sniffer_payload_text, self._sniffer_copy_status_var)
                   ).pack(side="left")
-        tk.Button(action_row_1, text="Guardar player ID", bg=ACCENT, fg=TEXT,
+        tk.Button(action_row_1, text="Guardar player ID", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._save_selected_follow_player_id).pack(side="left", padx=(6, 0))
         tk.Button(action_row_1, text="Quitar player ID", bg=RED, fg=TEXT,
@@ -4558,7 +4673,7 @@ class App(tk.Tk):
                   cursor="hand2",
                   command=lambda: self._move_mouse_to_sniffer_selection(self._sniffer_selection_entry, self._sniffer_test_status_var)
                   ).pack(side="left", padx=(6, 0))
-        tk.Button(action_row_2, text="Anclar offset (3s)", bg=ACCENT, fg=TEXT,
+        tk.Button(action_row_2, text="Anclar offset (3s)", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2",
                   command=lambda: self._start_visual_grid_anchor(self._sniffer_selection_entry, self._sniffer_test_status_var)
@@ -4651,7 +4766,7 @@ class App(tk.Tk):
 
         self._sniffer_tree.bind("<<TreeviewSelect>>", on_tree_select)
 
-        tk.Label(center, text="Muestras de calibraciÃ³n del map_id", bg=BG, fg=TEXT,
+        tk.Label(center, text="Muestras de calibración del map_id", bg=BG, fg=TEXT,
                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
         samples_frame = tk.Frame(center, bg=PANEL)
         samples_frame.pack(fill="x", expand=False, pady=(4, 0))
@@ -4708,7 +4823,7 @@ class App(tk.Tk):
         self._sniffer_grid_status_var = tk.StringVar(value="Sin captura aún")
         tk.Label(calib_top, textvariable=self._sniffer_grid_status_var, bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
-        tk.Button(calib_top, text="Refrescar captura", bg=ACCENT, fg=TEXT,
+        tk.Button(calib_top, text="Refrescar captura", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._refresh_sniffer_grid_capture).pack(side="right")
         tk.Checkbutton(calib_top, text="Ver mapa logico", variable=self._sniffer_grid_show_logic_var,
@@ -4726,7 +4841,7 @@ class App(tk.Tk):
         sliders.pack(fill="x", pady=(0, 6))
         tk.Label(sliders, text="Cell Width", bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
         cell_width_entry = tk.Entry(sliders, textvariable=self._sniffer_grid_cell_width_entry_var, width=7,
-                                    bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat")
+                                    bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat")
         cell_width_entry.pack(side="left", padx=(4, 6))
         self._bind_sniffer_grid_entry(cell_width_entry)
         tk.Scale(sliders, from_=20, to=140, resolution=0.1, orient="horizontal",
@@ -4735,7 +4850,7 @@ class App(tk.Tk):
                  length=180).pack(side="left", padx=(4, 12))
         tk.Label(sliders, text="Cell Height", bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
         cell_height_entry = tk.Entry(sliders, textvariable=self._sniffer_grid_cell_height_entry_var, width=7,
-                                     bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat")
+                                     bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat")
         cell_height_entry.pack(side="left", padx=(4, 6))
         self._bind_sniffer_grid_entry(cell_height_entry)
         tk.Scale(sliders, from_=10, to=90, resolution=0.1, orient="horizontal",
@@ -4744,7 +4859,7 @@ class App(tk.Tk):
                  length=180).pack(side="left", padx=(4, 12))
         tk.Label(sliders, text="Offset X", bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
         offset_x_entry = tk.Entry(sliders, textvariable=self._sniffer_grid_offset_x_entry_var, width=7,
-                                  bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat")
+                                  bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat")
         offset_x_entry.pack(side="left", padx=(4, 6))
         self._bind_sniffer_grid_entry(offset_x_entry)
         tk.Scale(sliders, from_=-300, to=300, resolution=0.5, orient="horizontal",
@@ -4753,14 +4868,14 @@ class App(tk.Tk):
                  length=180).pack(side="left", padx=(4, 12))
         tk.Label(sliders, text="Offset Y", bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
         offset_y_entry = tk.Entry(sliders, textvariable=self._sniffer_grid_offset_y_entry_var, width=7,
-                                  bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat")
+                                  bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat")
         offset_y_entry.pack(side="left", padx=(4, 6))
         self._bind_sniffer_grid_entry(offset_y_entry)
         tk.Scale(sliders, from_=-250, to=250, resolution=0.5, orient="horizontal",
                  variable=self._sniffer_grid_offset_y_var, bg=BG, fg=TEXT,
                  highlightthickness=0, command=self._on_sniffer_grid_param_change,
                  length=180).pack(side="left", padx=(4, 0))
-        tk.Button(sliders, text="Aplicar", bg=ACCENT, fg=TEXT,
+        tk.Button(sliders, text="Aplicar", bg=CARD, fg=TEXT,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
                   cursor="hand2", command=self._apply_sniffer_grid_entry_values).pack(side="left", padx=(8, 0))
 
@@ -5014,7 +5129,7 @@ class App(tk.Tk):
         initial_ready = self.config_data["bot"].get("combat_placement_settle_delay", 0.12)
         self._combat_placement_settle_var = tk.StringVar(value=str(float(initial_ready)))
         tk.Entry(ready_row, textvariable=self._combat_placement_settle_var, width=8,
-                 bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat",
                  font=("Segoe UI", 9)).pack(side="left", padx=(8, 6))
         tk.Button(ready_row, text="Guardar", bg=GREEN, fg=BG,
                   font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
@@ -5047,9 +5162,9 @@ class App(tk.Tk):
                 row = tk.Frame(timing_container, bg=BG)
                 row.pack(fill="x", pady=1)
                 tk.Label(row, text=label, bg=BG, fg=SUBTEXT, font=("Segoe UI", 8), width=18, anchor="w").pack(side="left")
-                tk.Entry(row, textvariable=vmin, width=5, bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(0, 4))
+                tk.Entry(row, textvariable=vmin, width=5, bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(0, 4))
                 tk.Label(row, text="-", bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
-                tk.Entry(row, textvariable=vmax, width=5, bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(4, 6))
+                tk.Entry(row, textvariable=vmax, width=5, bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(4, 6))
 
             btn_row = tk.Frame(timing_container, bg=BG)
             btn_row.pack(fill="x", pady=(4, 0))
@@ -5168,39 +5283,69 @@ class App(tk.Tk):
         self._build_profile_extra()
 
     def _build_status(self, parent):
-        row = tk.Frame(parent, bg=BG)
+        # Barra de estado estilo v2: border-top + PANEL bg
+        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x")
+        row = tk.Frame(parent, bg=PANEL, pady=5)
         row.pack(fill="x")
         self._status_frame = row
-        tk.Label(row, text="Estado:", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
-        self.lbl_status = tk.Label(row, text="Detenido", bg=BG, fg=RED,
+        # Dot de estado + texto
+        self._status_dot_lbl = tk.Label(row, text="●", bg=PANEL, fg=RED,
+                                        font=("Segoe UI", 8))
+        self._status_dot_lbl.pack(side="left", padx=(12, 3))
+        self.lbl_status = tk.Label(row, text="Detenido", bg=PANEL, fg=SUBTEXT,
                                    font=("Segoe UI", 9, "bold"))
-        self.lbl_status.pack(side="left", padx=6)
-        self.lbl_pods = tk.Label(row, text="PODS: ? / ?", bg=BG, fg=SUBTEXT,
-                                 font=("Segoe UI", 9, "bold"))
-        self.lbl_pods.pack(side="left", padx=10)
-        self.lbl_count = tk.Label(row, text="Cosechados: 0", bg=BG, fg=SUBTEXT,
+        self.lbl_status.pack(side="left")
+        self.lbl_pods = tk.Label(row, text="", bg=PANEL, fg=DIM,
+                                 font=("Segoe UI", 9))
+        self.lbl_pods.pack(side="left", padx=(12, 0))
+        # Versión a la derecha (estilo v2)
+        tk.Label(row, text="v1.0", bg=PANEL, fg=DIM,
+                 font=("Segoe UI", 9)).pack(side="right", padx=12)
+        self.lbl_count = tk.Label(row, text="Cosechados: 0", bg=PANEL, fg=DIM,
                                   font=("Segoe UI", 9))
-        self.lbl_count.pack(side="right")
+        self.lbl_count.pack(side="right", padx=(0, 12))
 
     def _build_log(self, parent):
+        """Construye el panel de log. Siempre fill=both, expand=True."""
+        is_tab = True  # siempre se usa en la pestaña Logs ahora
+
         header = tk.Frame(parent, bg=BG)
-        header.pack(fill="x", pady=(10, 2))
-        tk.Label(header, text="Log", bg=BG, fg=TEXT,
-                 font=("Segoe UI", 10, "bold")).pack(side="left")
-        tk.Button(header, text="Copiar todo", bg=ACCENT, fg=TEXT,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
-                  cursor="hand2", command=self._copy_log_text).pack(side="right")
-        frame = tk.Frame(parent, bg=PANEL)
-        frame.pack(fill="both")
+        header.pack(fill="x", pady=(6, 2), padx=8)
+        tk.Label(header, text="LOG DE SESIÓN", bg=BG, fg=SUBTEXT,
+                 font=("Segoe UI", 9)).pack(side="left")
+        btn_row = tk.Frame(header, bg=BG)
+        btn_row.pack(side="right")
+        tk.Button(btn_row, text="Limpiar", bg=CARD, fg=SUBTEXT,
+                  font=("Segoe UI", 7), relief="flat", padx=8, pady=2,
+                  highlightthickness=1, highlightbackground=BORDER,
+                  cursor="hand2", command=self._clear_log_text).pack(side="left", padx=(0, 4))
+        tk.Button(btn_row, text="Copiar todo", bg=CARD, fg=SUBTEXT,
+                  font=("Segoe UI", 7), relief="flat", padx=8, pady=2,
+                  highlightthickness=1, highlightbackground=BORDER,
+                  cursor="hand2", command=self._copy_log_text).pack(side="left")
+
+        frame = tk.Frame(parent, bg=CARD, bd=0, highlightthickness=1,
+                         highlightbackground=BORDER)
+        frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self._log_frame = frame
-        self.log_text = tk.Text(frame, height=12, width=52, bg=PANEL, fg=TEXT,
-                                font=("Consolas", 8), relief="flat",
-                                state="disabled", wrap="word")
+
+        text_kw = dict(bg=CARD, fg=TEXT, font=("Consolas", 9), relief="flat",
+                       state="disabled", wrap="word", insertbackground=BLUE)
+        if not is_tab:
+            text_kw["height"] = 10
+
+        self.log_text = tk.Text(frame, **text_kw)
         scroll = ttk.Scrollbar(frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scroll.set)
-        self.log_text.pack(side="left", fill="both", padx=6, pady=6)
+        self.log_text.pack(side="left", fill="both", expand=True, padx=6, pady=6)
         scroll.pack(side="right", fill="y")
+
+    def _clear_log_text(self):
+        if not hasattr(self, "log_text") or self.log_text is None:
+            return
+        self.log_text.config(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.config(state="disabled")
 
     def _copy_log_text(self):
         if not hasattr(self, "log_text") or self.log_text is None:
@@ -5220,8 +5365,10 @@ class App(tk.Tk):
             from detector import Detector
             threshold = self.config_data["bot"].get("threshold", 0.55)
             detector = Detector(threshold=threshold)
-            monitor_idx = self.config_data["game"].get("monitor", 2)
+            monitor_idx = self.config_data.get("game", {}).get("monitor", 2)
             with mss.mss() as sct:
+                if monitor_idx >= len(sct.monitors):
+                    monitor_idx = 1
                 monitor = sct.monitors[monitor_idx]
                 shot = sct.grab(monitor)
                 frame = np.ascontiguousarray(np.array(shot)[:, :, :3])
@@ -5823,6 +5970,17 @@ class App(tk.Tk):
     def _start_test_mode(self):
         self._start_bot_with_mode(test_mode=True)
 
+    def _set_bot_status(self, text: str, color: str):
+        """Sincroniza el dot+label del header y la barra de estado inferior."""
+        if hasattr(self, "_header_status_dot") and self._header_status_dot:
+            self._header_status_dot.config(fg=color)
+        if hasattr(self, "_header_status_lbl") and self._header_status_lbl:
+            self._header_status_lbl.config(text=text)
+        if hasattr(self, "lbl_status") and self.lbl_status:
+            self.lbl_status.config(text=text, fg=color)
+        if hasattr(self, "_status_dot_lbl") and self._status_dot_lbl:
+            self._status_dot_lbl.config(fg=color)
+
     def _start_bot_with_mode(self, test_mode: bool):
         if self.bot_thread and self.bot_thread.is_alive():
             return
@@ -5830,10 +5988,12 @@ class App(tk.Tk):
         config = load_config()
         self.bot_thread = BotThread(config, self.log_queue, test_mode=test_mode)
         self.bot_thread.start()
-        self.btn_toggle.config(text="⏹  Detener", bg=RED, fg=TEXT)
+        self.btn_toggle.config(text="■  CORRIENDO", bg=GREEN, fg="#0a1a0f",
+                               highlightbackground=GREEN)
         self.btn_test.config(state="disabled")
         self.btn_pause.config(state="normal")
-        self.lbl_status.config(text="TEST" if test_mode else "Corriendo", fg=BLUE if test_mode else GREEN)
+        self._set_bot_status("TEST" if test_mode else "Corriendo",
+                             BLUE if test_mode else GREEN)
 
     def _pause_bot(self):
         if self.bot_thread:
@@ -5842,10 +6002,11 @@ class App(tk.Tk):
     def _stop_bot(self):
         if self.bot_thread:
             self.bot_thread.stop()
-        self.btn_toggle.config(text="▶  Iniciar", bg=GREEN, fg=BG)
+        self.btn_toggle.config(text="▶  INICIAR", bg=ACCENT, fg="white",
+                               highlightbackground=BLUE)
         self.btn_test.config(state="normal")
-        self.btn_pause.config(state="disabled", text="⏸  Pausar")
-        self.lbl_status.config(text="Detenido", fg=RED)
+        self.btn_pause.config(state="disabled", text="⏸  PAUSAR")
+        self._set_bot_status("Detenido", RED)
 
     def _simulate_unload(self):
         if self.bot_thread and self.bot_thread.bot:
@@ -5875,11 +6036,11 @@ class App(tk.Tk):
                         cb(data)
                 elif event == "paused":
                     if data:
-                        self.btn_pause.config(text="▶  Reanudar")
-                        self.lbl_status.config(text="Pausado", fg=YELLOW)
+                        self.btn_pause.config(text="▶  REANUDAR")
+                        self._set_bot_status("Pausado", YELLOW)
                     else:
-                        self.btn_pause.config(text="⏸  Pausar")
-                        self.lbl_status.config(text="Corriendo", fg=GREEN)
+                        self.btn_pause.config(text="⏸  PAUSAR")
+                        self._set_bot_status("Corriendo", GREEN)
                 elif event == "scan_mobs_empty":
                     self.log_queue.put(("log", "[MOBS] Todos los mobs quedaron desactivados"))
                     self._refresh_mobs()

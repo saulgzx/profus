@@ -26,7 +26,7 @@ class Screen:
         self.window_title = window_title
         self.sct = mss.mss()
         self.monitors = list(self.sct.monitors[1:])
-        self.monitor_index = monitor_index
+        self.monitor_index = monitor_index if monitor_index < len(self.sct.monitors) else 1
         self.monitor = self.sct.monitors[monitor_index]
         self.window_region = None
         self.game_roi = game_roi or {

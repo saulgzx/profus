@@ -8,8 +8,8 @@ pyautogui.FAILSAFE = True  # Mover mouse a esquina superior izquierda para deten
 
 class Actions:
     def __init__(self, bot_config: dict):
-        self.delay_min = bot_config["delay_min"]
-        self.delay_max = bot_config["delay_max"]
+        self.delay_min = bot_config.get("delay_min", 0.1)
+        self.delay_max = bot_config.get("delay_max", 0.3)
         self.quick_move_min = bot_config.get("quick_move_min", 0.02)
         self.quick_move_max = bot_config.get("quick_move_max", 0.06)
         self.quick_click_pause_min = bot_config.get("quick_click_pause_min", 0.02)
@@ -73,6 +73,13 @@ class Actions:
     def type_text(self, text: str):
         self._random_delay()
         pyautogui.typewrite(text, interval=random.uniform(0.05, 0.15))
+
+    def scroll_at(self, pos: tuple[int, int], clicks: int = -3):
+        """Rueda del ratón en una posición. clicks negativo = scroll down."""
+        x, y = self._jitter(*pos, radius=4)
+        pyautogui.moveTo(x, y, duration=random.uniform(self.quick_move_min, self.quick_move_max))
+        time.sleep(random.uniform(0.05, 0.12))
+        pyautogui.scroll(clicks, x=x, y=y)
 
     def park_mouse(self, regions: list[dict] | None):
         """Mueve el cursor a una region aleatoria fuera del juego para no tapar la UI."""

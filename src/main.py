@@ -28,8 +28,14 @@ def on_press(key):
 def load_config(path=None):
     if path is None:
         path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        data = {}
+    for key in ("bot", "farming", "game", "leveling", "navigation"):
+        data.setdefault(key, {})
+    return data
 
 
 def main():

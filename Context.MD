@@ -27,7 +27,9 @@ En `bot.py`, el `tick()` se comporta así:
 ```text
 scan  -> (resource) -> _scan()      -> click_resource -> wait_first_segar / harvesting_wait
       -> (leveling) -> scan_mobs    -> _scan_mobs()   -> click_mob -> _click_mob()
+      -> (teleport) -> teleport_start -> teleport_click_use -> teleport_select_dest -> teleport_confirm -> teleport_wait_map
 any   -> in_combat  (GJK/Gp sniffer) -> _handle_combat() -> _combat_origin
+any   -> unloading_start (PODS >= 950) -> ... -> unloading_finish -> unloading_wait_return -> scan
 ```
 
 ### Re-escaneo de recursos
