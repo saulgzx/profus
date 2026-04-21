@@ -1,8 +1,32 @@
-active_teleport_profile: Farm Jalato
+active_teleport_profile: Crujis
 bot:
   actor_id: '22240'
+  bank_unload_pods_threshold: 1800
   cell_calibration:
-    local_map_xml_dir: C:\Users\Alexis\Downloads\Bot-Dofus-1.29.1-master\mapas\mapas
+    calibration_staging_points:
+    - cell_id: 231
+      mouse_x: 2134
+      mouse_y: 526
+    - cell_id: 89
+      mouse_x: 1214
+      mouse_y: 458
+    - cell_id: 189
+      mouse_x: 427
+      mouse_y: 460
+    - cell_id: 305
+      mouse_x: 423
+      mouse_y: 722
+    - cell_id: 168
+      mouse_x: 1473
+      mouse_y: 390
+    - cell_id: 286
+      mouse_x: 1736
+      mouse_y: 660
+    combat_click_offset_y: 0
+    debug_click_offsets: true
+    global_click_offset_x: 0
+    global_click_offset_y: 0
+    local_map_xml_dir: C:\Users\Alexis\dofus-autofarm\mapas
     map_origins:
     - x: 6827
       y: 1592
@@ -47,935 +71,175 @@ bot:
         x: 11338.15
         y: 2883.15
     map_width: 15
+    placement_click_offset_y: 0
     slopes:
       col_x: -357.43
       col_y: -77.43
       row_x: -321
       row_y: -63
+    visual_grid_auto_calibrate: true
     visual_grid_by_map_id:
-      '1004':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '1005':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '1006':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '177':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '1856':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '1857':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '1858':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '1859':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '1868':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '1869':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '2023':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '206':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '207':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '2073':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '2074':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '2081':
-        canvas_height: 344
-        canvas_width: 640
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '2083':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '2084':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '210':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '211':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '212':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '213':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '214':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '2145':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '215':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '2169':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '217':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '249':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '250':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '271':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
+      '2926':
+        canvas_height: 1377
+        canvas_width: 2560
+        cell_height: 67.0
+        cell_width: 131.43
+        offset_x: 292.79
+        offset_y: -34.5
+        specific: true
       '2966':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '298':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '300':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3006':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3022':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '303':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '304':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3656':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3657':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3658':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3659':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3660':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3697':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3698':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3699':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3700':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3701':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3702':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3703':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3704':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3705':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3706':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3707':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '3708':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '406':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '407':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4207':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4209':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4459':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4472':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4495':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4496':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4498':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4499':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4529':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4531':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4533':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '4534':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '477':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '482':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '485':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '486':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '489':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '490':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '492':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '493':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '494':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '495':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '496':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '50':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '52':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '521':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '522':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '527':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '558':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '559':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '560':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '561':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '6367':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '670':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '671':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '673':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '674':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '677':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '6942':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '6952':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '6954':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7314':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7329':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7332':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7346':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7363':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7394':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7395':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7397':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '741':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7410':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7411':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7412':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7413':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7414':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7415':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7416':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7417':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7428':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7430':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7434':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7516':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7549':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '7799':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '943':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '944':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '945':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '946':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '947':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '948':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '9505':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '9508':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '9509':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '954':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
-      '955':
-        canvas_height: 422
-        canvas_width: 784
-        cell_height: 19.85
-        cell_width: 39.7
-        offset_x: 97.0
-        offset_y: -8.5
+        canvas_height: 1377
+        canvas_width: 2560
+        cell_height: 67.06
+        cell_width: 131.16
+        offset_x: 294.6
+        offset_y: -35.38
+        specific: true
+      '6370':
+        auto_calibrated: true
+        auto_calibrated_at: 1776454355.6299617
+        auto_calibrated_rmse: 7.99
+        auto_calibrated_samples: 7
+        canvas_height: 1440
+        canvas_width: 2560
+        cell_height: 66.12
+        cell_width: 132.62
+        offset_x: 274.31
+        offset_y: -22.64
+      '6379':
+        canvas_height: 1440
+        canvas_width: 2560
+        cell_height: 67.07
+        cell_width: 132.36
+        offset_x: 290.09
+        offset_y: -36.15
+        specific: true
+      '6539':
+        canvas_height: 1377
+        canvas_width: 2560
+        cell_height: 67.04
+        cell_width: 131.29
+        offset_x: 293.14
+        offset_y: -33.75
+        specific: true
     visual_grid_global:
-      cell_height: 19.85
-      cell_width: 39.7
-      offset_x: 97.0
-      offset_y: -8.5
+      canvas_height: 1440
+      canvas_width: 2560
+      cell_height: 66.98
+      cell_width: 131.07
+      offset_x: 296.28
+      offset_y: -37.03
+    world_click_offset_x: 0
+    world_click_offset_y: 0
     world_map_samples_by_map_id:
+      '2966':
+      - cell_id: 167
+        saved_at: 1776470878.845224
+        screen_x: 1345
+        screen_y: 395
+        source: auto_movement
+      - cell_id: 195
+        saved_at: 1776471204.6433375
+        screen_x: 1214
+        screen_y: 472
+        source: auto_movement
+      - cell_id: 223
+        saved_at: 1776519955.6902184
+        screen_x: 1083
+        screen_y: 556
+        source: auto_movement
+      - cell_id: 268
+        saved_at: 1776519963.985756
+        screen_x: 1279
+        screen_y: 648
+        source: auto_movement
+      - cell_id: 165
+        saved_at: 1776520420.2538097
+        screen_x: 1083
+        screen_y: 420
+        source: auto_movement
+      '6370':
+      - cell_id: 400
+        saved_at: 1776424625.4785872
+        screen_x: 1469
+        screen_y: 931
+        source: auto_movement
+      - cell_id: 357
+        saved_at: 1776424632.7865655
+        screen_x: 1534
+        screen_y: 818
+        source: auto_movement
+      - cell_id: 299
+        saved_at: 1776424719.5795264
+        screen_x: 1534
+        screen_y: 689
+        source: auto_movement
+      - cell_id: 387
+        saved_at: 1776424936.1059692
+        screen_x: 1663
+        screen_y: 883
+        source: auto_movement
+      - cell_id: 313
+        saved_at: 1776454229.9334304
+        screen_x: 1468
+        screen_y: 728
+        source: auto_movement
+      - cell_id: 359
+        saved_at: 1776454297.5186658
+        screen_x: 1801
+        screen_y: 838
+        source: auto_movement
+      - cell_id: 329
+        saved_at: 1776454355.629645
+        screen_x: 1668
+        screen_y: 769
+        source: auto_movement
+      '6379':
+      - cell_id: 365
+        saved_at: 1776438029.0537384
+        screen_x: 679
+        screen_y: 865
+        source: auto_movement
+      - cell_id: 337
+        saved_at: 1776448255.3372974
+        screen_x: 853
+        screen_y: 794
+        source: auto_movement
+      - cell_id: 366
+        saved_at: 1776448523.533946
+        screen_x: 826
+        screen_y: 866
+        source: auto_movement
+      - cell_id: 295
+        saved_at: 1776448682.2348027
+        screen_x: 1035
+        screen_y: 701
+        source: auto_movement
+      - cell_id: 267
+        saved_at: 1776452718.641766
+        screen_x: 1150
+        screen_y: 630
+        source: auto_movement
+      - cell_id: 239
+        saved_at: 1776453662.763281
+        screen_x: 1283
+        screen_y: 563
+        source: auto_movement
+      - cell_id: 323
+        saved_at: 1776453751.7092035
+        screen_x: 886
+        screen_y: 762
+        source: auto_movement
+      - cell_id: 309
+        saved_at: 1776453982.783638
+        screen_x: 952
+        screen_y: 729
+        source: auto_movement
+      - cell_id: 281
+        saved_at: 1776454088.666914
+        screen_x: 1084
+        screen_y: 663
+        source: auto_movement
       '671':
       - cell_id: 209
         entity_kind: mob_group
@@ -1002,6 +266,70 @@ bot:
         screen_y: 522
   collect_min_wait: 7.0
   combat_auto_ready_delay: 0.12
+  combat_calibration:
+    learned_offsets_by_map_id:
+      '2966':
+        by_cell:
+          '223':
+            dx: 0
+            dy: -12
+      '6539':
+        by_cell:
+          '183':
+            dx: 0
+            dy: -12
+          '222':
+            dx: 0
+            dy: -12
+    manual_overrides_by_map_id: {}
+    spell_jitter_offsets_by_map_id:
+      '2881':
+        by_cell:
+          '137':
+            dx: 0
+            dy: -10
+          '152':
+            dx: 0
+            dy: -10
+      '2926':
+        by_cell:
+          '169':
+            dx: 0
+            dy: -10
+          '214':
+            dx: 0
+            dy: -10
+      '2966':
+        by_cell:
+          '121':
+            dx: 0
+            dy: -10
+          '124':
+            dx: 0
+            dy: -10
+          '150':
+            dx: 0
+            dy: -10
+          '151':
+            dx: 0
+            dy: -10
+          '240':
+            dx: 0
+            dy: -10
+          '268':
+            dx: 0
+            dy: -10
+          '285':
+            dx: 0
+            dy: -10
+          '300':
+            dx: 0
+            dy: -10
+      '6539':
+        by_cell:
+          '183':
+            dx: 0
+            dy: -10
   combat_card_offset: 90
   combat_center_move_duration: 0.02
   combat_close_delay: 0.1
@@ -1011,9 +339,40 @@ bot:
   combat_idle_wait: 0.02
   combat_manual_mode: false
   combat_menu_open_delay: 0.08
+  combat_move_retry_offsets:
+  - - 0
+    - 0
+  - - 0
+    - -15
+  - - 0
+    - 15
+  - - 0
+    - -30
+  - - 0
+    - 30
+  - - -25
+    - 0
+  - - 25
+    - 0
+  - - -25
+    - -15
+  - - 25
+    - -15
+  - - -25
+    - 15
+  - - 25
+    - 15
+  - - -40
+    - 0
+  - - 40
+    - 0
+  - - 0
+    - -45
+  - - 0
+    - 45
   combat_ok_delay: 0.1
   combat_pa: 6
-  combat_placement_settle_delay: 2.0
+  combat_placement_settle_delay: 4.0
   combat_poll_interval: 0.75
   combat_poll_interval_max: 0.25
   combat_poll_interval_min: 0.15
@@ -1024,12 +383,42 @@ bot:
   combat_post_click_delay_min: 0.1
   combat_pre_capture_delay: 0.03
   combat_pre_spell_pause: 0.03
+  combat_priority_min_enemy_distance: 5
+  combat_priority_movement_targets_by_map_id:
+    2881:
+      107: 152
+      179: 149
+    2926:
+      169: 141
+      186: 214
+    2966:
+      195: 195
+      223: 268
+    6370:
+      400: 357
+  combat_priority_placement_cells_by_arena_fp: {}
+  combat_priority_placement_cells_by_map_id:
+    2881:
+    - 107
+    - 179
+    2926:
+    - 186
+    - 169
+    2966:
+    - 223
+    - 195
+    6370:
+    - 400
+    - 329
   combat_profile: Sadida
   combat_ready_delay: 0.12
+  combat_self_spell_click_y_offset: -20
   combat_spell_pa_cost: 3
-  combat_spell_select_delay: 0.05
-  combat_spell_select_delay_max: 0.1
-  combat_spell_select_delay_min: 0.05
+  combat_spell_select_delay: 0.1
+  combat_spell_select_delay_max: 0.15
+  combat_spell_select_delay_min: 0.08
+  combat_telemetry: true
+  combat_telemetry_categories: []
   combat_turn_cooldown: 0.25
   combat_turn_cooldown_max: 0.25
   combat_turn_cooldown_min: 0.15
@@ -1039,8 +428,54 @@ bot:
   dismiss_after_click_min: 0.05
   dismiss_pause_max: 0.05
   dismiss_pause_min: 0.02
+  eat_bread_click_y_offset: -30
+  eat_bread_cooldown_s: 4.0
+  eat_bread_enabled: true
+  eat_bread_hp_threshold: 600
+  eat_bread_key: '4'
   enable_bank_unload: true
+  learned_offsets_flush_every: 3
+  manual_pixel_by_map_cell:
+    '2881':
+      '107':
+      - 1079
+      - 257
+      '149':
+      - 884
+      - 358
+      '152':
+      - 1276
+      - 360
+      '179':
+      - 1013
+      - 427
+    '2926':
+      '141':
+      - 1735
+      - 323
+      '169':
+      - 1606
+      - 392
+      '186':
+      - 1936
+      - 425
+      '214':
+      - 1804
+      - 496
+    '2966':
+      '195':
+      - 1214
+      - 458
+      '223':
+      - 1083
+      - 526
+      '268':
+      - 1279
+      - 626
+  mob_attack_global_cooldown: 3.0
+  mob_entity_click_cooldown: 3.0
   mob_scan_idle_delay: 0.5
+  nav_cell_click_cooldown: 3.5
   pause_key: F10
   pj_threshold: 0.4
   quick_click_pause_max: 0.05
@@ -1063,7 +498,7 @@ farming:
   - 46
   - 70
   menu_row_height: 28
-  mode: leveling
+  mode: route
   professions:
     Campesino:
       enabled: true
@@ -1226,7 +661,7 @@ farming:
       - 811
       profession: Campesino
       resource: Avena
-  route_profile: Boo's
+  route_profile: Crujis
   use_sprite_fallback: false
 game:
   game_roi:
@@ -1253,19 +688,47 @@ leveling:
   follow_players_enabled: false
   ignore_single_mob_groups: false
   join_external_fights_actor_id: '16812'
-  join_external_fights_any: true
+  join_external_fights_any: false
+  lvl_ratas_mode: true
   mobs:
     Arakna:
-      enabled: true
-      template_ids:
-      - 52
-    Arakna Mayor:
       enabled: false
       ignore: false
       template_ids:
+      - 52
+    Arakna Mayor:
+      enabled: true
+      ignore: false
+      template_ids:
       - 259
+    Biblop Coco:
+      enabled: true
+      ignore: false
+      template_ids:
+      - 278
+    Blop Coco:
+      enabled: true
+      ignore: false
+      template_ids:
+      - 273
+    Blop Guinda:
+      enabled: true
+      ignore: false
+      template_ids:
+      - 275
+    Blop Indigo:
+      enabled: true
+      ignore: false
+      template_ids:
+      - 274
+    Blop Reineta:
+      enabled: true
+      ignore: false
+      template_ids:
+      - 296
+      - 276
     Boo:
-      enabled: false
+      enabled: true
       ignore: false
       template_ids:
       - 112
@@ -1275,37 +738,42 @@ leveling:
       template_ids:
       - 343
     Chaman De Alcantarillas:
-      enabled: false
+      enabled: true
       ignore: false
       template_ids:
       - 447
+    Crujidor de las Llanuras:
+      enabled: true
+      ignore: false
+      template_ids:
+      - 293
     Dragocerdo:
       enabled: false
       ignore: true
       template_ids:
       - 113
     Girasol Salvaje:
-      enabled: true
+      enabled: false
       ignore: false
       template_ids:
       - 48
     Jalatin Blanco:
-      enabled: true
+      enabled: false
       ignore: false
       template_ids:
       - 134
     Jalatin Negro:
-      enabled: true
+      enabled: false
       ignore: false
       template_ids:
       - 149
     Jalato:
-      enabled: true
+      enabled: false
       ignore: false
       template_ids:
       - 101
     Jefe Jalato:
-      enabled: true
+      enabled: false
       ignore: false
       template_ids:
       - 148
@@ -1324,7 +792,7 @@ leveling:
       template_ids:
       - 103
     Rata de Alcantarillas:
-      enabled: false
+      enabled: true
       ignore: false
       template_ids:
       - 442
@@ -1332,7 +800,7 @@ leveling:
       enabled: true
       template_ids:
       - 98
-  route_profile: FarmJalato
+  route_profile: Crujis
   template_id_db:
     '101': Jalato
     '103': Prespic
@@ -1343,6 +811,13 @@ leveling:
     '149': Jalatin Negro
     '159': Minilubo
     '259': Arakna Mayor
+    '273': Blop Coco
+    '274': Blop Indigo
+    '275': Blop Guinda
+    '276': Blop Reineta
+    '278': Biblop Coco
+    '293': Crujidor de las Llanuras
+    '296': Blop Reineta
     '343': Caballero Puerkazo
     '344': Pastor Puerkazo
     '442': Rata de Alcantarilla
@@ -1357,24 +832,77 @@ navigation:
   enabled: true
   route: &id001 []
   route_by_map_id: &id002
-    '673':
-    - 2141
-    - 930
-    '677':
-    - 1093
+    '3006':
+    - 407
+    - 526
+    '3007':
+    - 1213
+    - 45
+    '3008':
+    - 1862
+    - 46
+    '3009':
+    - 1870
+    - 43
+    '3010':
+    - 1474
+    - 44
+    '3014':
+    - 1610
+    - 43
+    '3015':
+    - 1079
+    - 44
+    '3016':
+    - 1489
     - 57
-    '946':
-    - 1086
-    - 1061
-    '947':
-    - 427
-    - 392
+    '3017':
+    - 1342
+    - 38
+    '3018':
+    - 1340
+    - 34
+    '3019':
+    - 1345
+    - 41
+    '3020':
+    - 1345
+    - 43
+    '3021':
+    - 1340
+    - 42
+    '3022':
+    - 1339
+    - 40
+    '4373':
+    - 1342
+    - 47
+    '4376':
+    - 1347
+    - 57
+    '4380':
+    - 1867
+    - 49
   route_exit_by_map_id: &id003 {}
   route_profiles:
-    Boo's:
+    Crujis:
+      loop: true
       route: *id001
       route_by_map_id: *id002
       route_exit_by_map_id: *id003
+      sequence:
+      - exit_cell: 218
+        map_id: 2966
+        pause_s: 5.0
+      - exit_cell: 189
+        map_id: 2926
+        pause_s: 5.0
+      - exit_cell: 202
+        map_id: 2881
+        pause_s: 5.0
+      - exit_cell: 231
+        map_id: 2926
+        pause_s: 5.0
     FarmJalato:
       route: []
       route_by_map_id: {}
@@ -1382,6 +910,19 @@ navigation:
         '1859': cell:448
         '6952': cell:86
         '6954': cell:202
+    Navegando en Cruji:
+      route: []
+      route_by_map_id:
+        '2881':
+        - 2145
+        - 458
+        '2926':
+        - 407
+        - 457
+        '2966':
+        - 423
+        - 526
+      route_exit_by_map_id: {}
     Porkazos:
       route: []
       route_by_map_id:
@@ -1422,6 +963,16 @@ navigation:
         - 1221
         - 60
       route_exit_by_map_id: {}
+    Ratas:
+      route: []
+      route_by_map_id:
+        '6370':
+        - 2068
+        - 1047
+        '6379':
+        - 1076
+        - 46
+      route_exit_by_map_id: {}
     Zaapabanco:
       route: []
       route_by_map_id: {}
@@ -1432,6 +983,14 @@ navigation:
         '7414': cell:142
 teleport_enabled: true
 teleport_profiles:
+  Crujis:
+    cell_id: '268'
+    dest_image: SierradeCania
+    expected_map: '3022'
+    farm_map: '2966'
+    mobs_activate: 273,274,275,278,293,296,276
+    route_name: Crujis
+    trigger_map: '7411'
   Farm Jalato:
     cell_id: '268'
     dest_image: LaCuna
@@ -1440,3 +999,11 @@ teleport_profiles:
     mobs_activate: 101,134,149,48,98,148,52
     route_name: FarmJalato
     trigger_map: '7411'
+  Ratas:
+    cell_id: '239'
+    dest_image: TallerJoyeros
+    expected_map: '4217'
+    farm_map: '6367'
+    mobs_activate: 259,447,442
+    route_name: Ratas
+    trigger_map: '6159'

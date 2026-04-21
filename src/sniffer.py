@@ -22,6 +22,7 @@ Eventos emitidos al event_queue (tipo, datos):
   ("pods_update",  {"current": int, "max": int})              Ow — actualización de pods (peso)
   ("raw_packet",   {"direction": str, "data": str})           solo en debug_mode=True
   ("player_profile", {"actor_id": str, "name": str, "raw": str}) PM~ — hint fuerte del actor propio
+  ("character_stats", {"hp": int, "max_hp": int, "kamas"?: int}) As — stats del PJ propio (HP/max HP)
 """
 
 import threading
@@ -160,6 +161,33 @@ def _parse_game_map_data(data: str) -> dict | None:
         "map_data": None,
         "raw": data,
     }
+
+
+def _parse_as(data: str) -> dict | None:
+    """Parsea el paquete `As` (stats del personaje propio) según PersonajeFrame.cs:
+    `As<exp_act,exp_min,exp_next>|<kamas>|<stat_points>|<spell_points>|<alignment>|<life,max_life>|<energy,max_energy>|<initiative>|<prospection>|<vit_base,vit_eq,vit_given,vit_boost>|<wisdom...>|...`
+
+    Solo necesitamos vida actual / vida máxima. Devuelve None si la posición 5
+    no es parseable (paquete malformado o cliente no inicializado).
+    """
+    try:
+        parts = data.split("|")
+        if len(parts) < 6:
+            return None
+        life_chunk = parts[5].split(",")
+        if len(life_chunk) < 2:
+            return None
+        hp = int(life_chunk[0].strip())
+        max_hp = int(life_chunk[1].strip())
+        result = {"hp": hp, "max_hp": max_hp}
+        # Kamas opcional para diagnostico
+        try:
+            result["kamas"] = int(parts[1].strip())
+        except (TypeError, ValueError, IndexError):
+            pass
+        return result
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def _parse_gtm(data: str) -> list[dict]:
@@ -443,6 +471,12 @@ class DofusSniffer:
         self.my_actor_id: str | None = None
         self._pending_turn_confirm = False  # True mientras esperamos confirmar nuestro ID
 
+        # Señal para despertar al hilo del bot cuando llega cualquier paquete
+        # parseable. Permite que el loop del bot use `wake_event.wait(timeout)`
+        # en vez de `time.sleep(N)` ciego, bajando la latencia sniffer→tick
+        # de hasta 100ms a <5ms cuando llegan GTS/GA/GTM/etc.
+        self.wake_event = threading.Event()
+
     # ──────────────────────────── public api ──
     def start(self):
         """Inicia el sniffer en un hilo daemon."""
@@ -623,6 +657,17 @@ class DofusSniffer:
         else:
             self._parse_client_packet(packet)
 
+        # Despertar al loop del bot: cualquier paquete protocolo completo de
+        # Dofus puede traer eventos accionables (turn_start, game_action,
+        # fighter_stats, placement, fight_end, ...). Los wakes "falsos" son
+        # baratos (tick() vuelve a dormir si no hay trabajo); los missed
+        # wakes cuestan hasta 100ms de latencia. El cost neto vs polling
+        # ciego a 100ms es 0 — solo movemos el tick al momento util.
+        try:
+            self.wake_event.set()
+        except Exception:
+            pass
+
     def _parse_server_packet(self, packet: str):
         q = self.event_queue
 
@@ -638,7 +683,15 @@ class DofusSniffer:
 
         # ── GTS — inicio de turno ──────────────────────────────────────────
         if packet.startswith("GTS"):
-            actor_id = packet[3:].split(".")[0].split("|")[0].strip()
+            # El body real puede usar varios delimitadores (".", "|", ";"). Cortar
+            # por todos y validar que el resultado sea un entero (positivo o negativo).
+            body = packet[3:]
+            for sep in (".", "|", ";", ","):
+                body = body.split(sep)[0]
+            actor_id = body.strip()
+            if not actor_id or not actor_id.lstrip("+-").isdigit():
+                print(f"[SNIFFER][DIAG] gts_unparsable raw={packet[:120]!r}")
+                return
             q.put(("turn_start", {"actor_id": actor_id}))
             print(f"[SNIFFER] Turno de actor {actor_id}")
             return
@@ -671,6 +724,7 @@ class DofusSniffer:
         # Formato: GJK{fightId}|{actorId}|{teamId}|{cellId}|{dir}|{alive}
         if packet.startswith("GJK"):
             parts = packet[3:].split("|")
+            fight_id = parts[0].strip() if len(parts) > 0 else ""
             actor_id = parts[1].strip() if len(parts) > 1 else ""
             team_id  = parts[2].strip() if len(parts) > 2 else ""
             cell_id: int | None = None
@@ -681,8 +735,10 @@ class DofusSniffer:
                     pass
             if actor_id and self.my_actor_id is None:
                 self._candidate_actor_id = actor_id
-            q.put(("fight_join", {"raw": packet[3:], "actor_id": actor_id, "team_id": team_id, "cell_id": cell_id}))
-            print(f"[DIAG] gjk actor={actor_id!r} team={team_id!r} cell={cell_id} raw={packet[:140]!r}")
+            q.put(("fight_join", {"raw": packet[3:], "fight_id": fight_id,
+                                    "actor_id": actor_id, "team_id": team_id,
+                                    "cell_id": cell_id}))
+            print(f"[DIAG] gjk fight={fight_id!r} actor={actor_id!r} team={team_id!r} cell={cell_id} raw={packet[:140]!r}")
             return
 
         # ── S{actor_id} — servidor listo para siguiente acción del actor ─────
@@ -793,7 +849,11 @@ class DofusSniffer:
             return
 
         if packet.startswith("As"):
-            q.put(("actor_snapshot", {"raw": packet[2:]}))
+            raw = packet[2:]
+            q.put(("actor_snapshot", {"raw": raw}))
+            stats = _parse_as(raw)
+            if stats:
+                q.put(("character_stats", stats))
             return
 
         if packet.startswith("SC"):

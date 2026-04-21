@@ -48,10 +48,22 @@ def main():
     print(f"[BOT] Iniciado. Pausa: F10 | Detener: F12")
     time.sleep(2)  # Tiempo para cambiar a la ventana del juego
 
+    # Loop event-driven: el sniffer marca `wake_event` al parsear cualquier
+    # paquete del server (GTS, GA, GTM, GE, ...). El bot reacciona en <5ms
+    # en vez de hasta 100ms. Si el sniffer aún no está activo (pre-combate,
+    # arranque) caemos a `time.sleep(0.1)` como antes. Clear+tick+wait
+    # asegura que no perdemos despertares: nuevos eventos llegados entre
+    # drain y wait ya dejaron el flag en True y retornan al instante.
     while running:
+        wake = getattr(bot, "sniffer_wake_event", None)
+        if wake is not None:
+            wake.clear()
         if not paused:
             bot.tick()
-        time.sleep(0.1)  # loop rapido, los delays estan dentro del bot
+        if wake is not None:
+            wake.wait(timeout=0.1)
+        else:
+            time.sleep(0.1)
 
     listener.stop()
     print("[BOT] Finalizado.")

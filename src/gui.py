@@ -56,19 +56,77 @@ def _list_mobs():
 CONFIG_PATH   = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
 GUI_ERROR_LOG = os.path.join(os.path.dirname(__file__), "..", "gui_error.log")
 
-BG      = "#0E0E12"   # BgDeep
-PANEL   = "#16161C"   # BgPanel
-CARD    = "#1E1E28"   # BgCard
-HOVER   = "#282836"   # BgHover
-ACCENT  = "#2277CC"   # AccentDim  (usado en paneles/botones)
-BLUE    = "#44AAFF"   # Accent (highlight)
-GREEN   = "#44FF88"   # Success
-RED     = "#FF4444"   # Danger
-YELLOW  = "#FFCC44"   # Warning
-TEXT    = "#E8E8EE"   # TextPrimary
-SUBTEXT = "#888899"   # TextSecondary
-DIM     = "#555566"   # TextDim
-BORDER  = "#2E2E3A"   # Border
+# ────────────────────────────────────────────────────────────────────────────
+# DESIGN TOKENS — Pro Max
+# Sistema de capas (surface levels), tipografía y espaciado.
+# Los nombres antiguos (BG/PANEL/CARD/...) se mantienen para compatibilidad
+# con el resto del codigo, pero apuntan a una paleta refinada.
+# ────────────────────────────────────────────────────────────────────────────
+
+# Surface levels — del mas profundo al mas elevado
+BG_BASE      = "#0A0C10"   # canvas raiz (fuera de paneles)
+BG_SUBTLE    = "#12151B"   # paneles (header/sidebar)
+BG_ELEVATED  = "#181C24"   # cards / inputs / botones secundarios
+BG_OVERLAY   = "#1F242E"   # popovers / hover de items
+BG_HIGHLIGHT = "#262C38"   # row selected / active
+
+# Brand (warm amber — rebrand Apple-inspired)
+BRAND        = "#F5A524"   # ambar principal
+BRAND_HOVER  = "#FFC04C"   # shade mas claro (hover)
+BRAND_ACTIVE = "#D18A10"   # shade mas oscuro (pressed)
+BRAND_SOFT   = "#3A2815"   # tint calido para fondos brand
+
+# Texto
+TEXT_PRIMARY   = "#E6E8EC"
+TEXT_SECONDARY = "#A0A6B0"
+TEXT_TERTIARY  = "#6B7280"
+TEXT_DISABLED  = "#4A5260"
+
+# Bordes
+BORDER_SUBTLE  = "#1F242C"
+BORDER_DEFAULT = "#2A3038"
+BORDER_STRONG  = "#3A4150"
+
+# Semantica
+SUCCESS = "#4ADE80"
+WARNING = "#FBBF24"
+DANGER  = "#F87171"
+INFO    = "#38BDF8"
+
+# Tipografia (Segoe UI esta en Win10/11; Consolas siempre)
+FONT_FAMILY      = "Segoe UI"
+FONT_FAMILY_MONO = "Consolas"
+FONT_DISPLAY     = (FONT_FAMILY, 15, "bold")     # logo/header titulo
+FONT_HEADING     = (FONT_FAMILY, 12, "bold")     # seccion grande
+FONT_TITLE       = (FONT_FAMILY, 11, "bold")     # subtitulo/card title
+FONT_BODY        = (FONT_FAMILY, 10)             # default
+FONT_BODY_BOLD   = (FONT_FAMILY, 10, "bold")
+FONT_CAPTION     = (FONT_FAMILY, 9)              # secundario/dim
+FONT_LABEL       = (FONT_FAMILY, 9, "bold")      # uppercase labels
+FONT_BUTTON      = (FONT_FAMILY, 9, "bold")
+FONT_MONO        = (FONT_FAMILY_MONO, 9)
+FONT_MONO_SMALL  = (FONT_FAMILY_MONO, 8)
+
+# Espaciado (multiplos de 4)
+SP_1, SP_2, SP_3, SP_4, SP_5, SP_6, SP_8 = 4, 8, 12, 16, 20, 24, 32
+
+# Radii (tk no soporta border-radius nativo; lo emulamos via padding+colors)
+RADIUS_SM, RADIUS_MD, RADIUS_LG = 4, 6, 10
+
+# ── Aliases compatibles con el resto del codigo ─────────────────────────────
+BG      = BG_BASE
+PANEL   = BG_SUBTLE
+CARD    = BG_ELEVATED
+HOVER   = BG_OVERLAY
+ACCENT  = BRAND_ACTIVE
+BLUE    = BRAND
+GREEN   = SUCCESS
+RED     = DANGER
+YELLOW  = WARNING
+TEXT    = TEXT_PRIMARY
+SUBTEXT = TEXT_SECONDARY
+DIM     = TEXT_TERTIARY
+BORDER  = BORDER_DEFAULT
 
 
 def _should_emit_runtime_log(msg: str) -> bool:
@@ -320,7 +378,7 @@ class _MobIconCaptureWindow(ResourceCaptureWindow):
 
 # ================================================================= BotThread ==
 class BotThread(threading.Thread):
-    def __init__(self, config, log_queue, test_mode: bool = False):
+    def __init__(self, config, log_queue, test_mode: bool = False, gui_root=None):
         super().__init__(daemon=True)
         self.config = config
         self.config.setdefault("bot", {})
@@ -331,13 +389,22 @@ class BotThread(threading.Thread):
         self.bot = None
         self._original_print = None
         self.test_mode = bool(test_mode)
+        self._gui_root = gui_root  # referencia a la ventana App; se pasa al bot en run()
 
     def run(self):
         self._patch_print()
         try:
             self.bot = Bot(self.config)
+            self.bot._gui_event_queue = self.log_queue  # eventos custom GUI (alertas, etc.)
+            self.bot._gui_root = self._gui_root          # para ocultar GUI al buscar "Cerrar"
             self.log_queue.put(("log", "[BOT] Iniciado"))
             while self._running:
+                # Limpiar el wake antes de tick() así los eventos que lleguen
+                # durante el tick re-setean el flag y wait() retorna al instante
+                # (sin perder despertares).
+                wake = getattr(self.bot, "sniffer_wake_event", None) if self.bot else None
+                if wake is not None:
+                    wake.clear()
                 if not self._paused:
                     try:
                         self.bot.tick()
@@ -346,6 +413,9 @@ class BotThread(threading.Thread):
                         error_msg = traceback.format_exc()
                         self.log_queue.put(("log", f"[ERROR FATAL] Bot se detuvo por un error:\n{error_msg}"))
                         break
+                # Timeout de fallback: si no llegan paquetes, tickeamos igual
+                # al ritmo anterior. Si el sniffer despierta antes, respondemos
+                # en <5ms en vez de hasta 100ms.
                 loop_sleep = 0.1
                 if self.bot and self.bot.sniffer_active:
                     mode = self.bot.config.get("farming", {}).get("mode", "resource")
@@ -353,7 +423,10 @@ class BotThread(threading.Thread):
                         loop_sleep = 0.015
                     else:
                         loop_sleep = 0.03
-                time.sleep(loop_sleep)
+                if wake is not None:
+                    wake.wait(timeout=loop_sleep)
+                else:
+                    time.sleep(loop_sleep)
         finally:
             if self.bot:
                 self.bot.shutdown()
@@ -393,36 +466,63 @@ class BotThread(threading.Thread):
 # ===================================================================== App ==
 class App(tk.Tk):
     def _place_window_on_monitor(self, width: int, height: int, monitor_index: int = 2) -> None:
+        """Coloca la ventana centrada en el monitor `monitor_index` segun la
+        enumeracion nativa de Windows (1 = primario, 2 = secundario, ...).
+        Si el monitor solicitado no existe, cae al primario con un log."""
         try:
             with mss.mss() as sct:
-                monitors = list(sct.monitors[1:]) if len(sct.monitors) > 1 else []
-                monitors = sorted(
-                    monitors,
-                    key=lambda mon: (int(mon.get("left", 0)), int(mon.get("top", 0))),
-                )
-                target_idx = max(0, int(monitor_index) - 1)
-                if not monitors or target_idx >= len(monitors):
+                # mss.monitors[0] es el desktop virtual; [1..N] son monitores reales
+                # en el orden que Windows reporta (1 = primario).
+                real_monitors = list(sct.monitors[1:]) if len(sct.monitors) > 1 else []
+                if not real_monitors:
                     self.geometry(f"{width}x{height}")
                     return
-                monitor = monitors[target_idx]
-        except Exception:
+
+                idx_zero_based = max(0, int(monitor_index) - 1)
+                if idx_zero_based >= len(real_monitors):
+                    print(f"[GUI] Monitor {monitor_index} no disponible "
+                           f"({len(real_monitors)} detectado/s) — usando monitor 1.")
+                    idx_zero_based = 0
+                monitor = real_monitors[idx_zero_based]
+        except Exception as exc:
+            print(f"[GUI] Error enumerando monitores: {exc!r}")
             self.geometry(f"{width}x{height}")
             return
 
         x = int(monitor["left"] + max(0, (monitor["width"] - width) // 2))
         y = int(monitor["top"] + max(0, (monitor["height"] - height) // 2))
         self.geometry(f"{width}x{height}+{x}+{y}")
+        # Diferir el lift para que el WM ya haya colocado la ventana.
+        try:
+            self.after(50, lambda: (self.lift(), self.focus_force()))
+        except Exception:
+            pass
 
     def __init__(self):
         super().__init__()
         self.report_callback_exception = self._report_tk_callback_exception
         sys.excepthook = self._report_global_exception
-        self.title("Dofus AutoFarm")
+        self.title("Dofus Autofarm")
         self.configure(bg=BG)
         self.resizable(True, True)
-        self._place_window_on_monitor(1100, 720, monitor_index=2)
+        # Icono de ventana + taskbar (ICO multi-size; tambien usado si se empaqueta con pyinstaller --icon)
+        try:
+            ico_path = os.path.join(os.path.dirname(__file__), "..", "assets", "brand", "logo.ico")
+            if os.path.exists(ico_path):
+                self.iconbitmap(default=ico_path)
+        except Exception:
+            pass
+        # Monitor preferido (configurable): por defecto secundario (2).
+        # Si no existe, _place_window_on_monitor cae al primario con log.
+        _cfg = load_config()
+        gui_cfg = _cfg.get("gui", {}) or {}
+        try:
+            preferred_monitor = int(gui_cfg.get("monitor_index", 2))
+        except (TypeError, ValueError):
+            preferred_monitor = 2
+        self._place_window_on_monitor(1100, 720, monitor_index=preferred_monitor)
         self.minsize(800, 500)
-        self.config_data = load_config()
+        self.config_data = _cfg
         self.bot_thread = None
         self.log_queue = queue.Queue()
         self.resource_vars = {}
@@ -519,11 +619,11 @@ class App(tk.Tk):
         self._main_runtime_mode_var = tk.StringVar(value=str(self.config_data.get("farming", {}).get("mode", "-")))
         self._main_runtime_map_var = tk.StringVar(value="-")
         self._main_runtime_sniffer_var = tk.StringVar(value="inactivo")
+        self._harvested_count = 0
+        self._pods_label = ""
 
         self._setup_hotkeys()
         self._build_ui()
-        # Colapsar módulo principal por defecto para dar más espacio a las tabs
-        self.after_idle(lambda: self._set_main_module_collapsed(True))
         self.bind("<Configure>", self._schedule_responsive_layout)
         self.after_idle(self._apply_responsive_layout)
         self._poll_queue()
@@ -574,36 +674,307 @@ class App(tk.Tk):
         listener.start()
 
     # ------------------------------------------------------------------ UI --
-    def _sep(self, parent):
-        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=8)
+    def _sep(self, parent, pad: int = SP_3):
+        """Separador subtil de 1px usando BORDER_SUBTLE."""
+        parent_bg = parent.cget("bg") if hasattr(parent, "cget") else BG
+        line = tk.Frame(parent, bg=BORDER_SUBTLE, height=1)
+        line.pack(fill="x", pady=pad)
+
+    # ── Pill button (hover-aware) ─────────────────────────────────────────
+    def _make_pill_button(self, parent, text: str, command=None,
+                          variant: str = "secondary", icon: str = "",
+                          size: str = "md", state: str = "normal"):
+        """Boton estilo pildora con hover. variant: primary/secondary/ghost/danger/success.
+        size: sm/md/lg."""
+        # Paleta segun variant
+        palette = {
+            "primary":   {"bg": BRAND, "fg": "#FFFFFF", "hover": BRAND_HOVER, "active": BRAND_ACTIVE, "border": BRAND},
+            "secondary": {"bg": BG_ELEVATED, "fg": TEXT_PRIMARY, "hover": BG_OVERLAY, "active": BG_HIGHLIGHT, "border": BORDER_DEFAULT},
+            "ghost":     {"bg": BG_SUBTLE, "fg": TEXT_SECONDARY, "hover": BG_ELEVATED, "active": BG_OVERLAY, "border": BORDER_SUBTLE},
+            "danger":    {"bg": BG_ELEVATED, "fg": DANGER, "hover": "#3A1F22", "active": "#4A2025", "border": "#4A2025"},
+            "success":   {"bg": BG_ELEVATED, "fg": SUCCESS, "hover": "#1A3A28", "active": "#1F4A30", "border": "#1F4A30"},
+            "warning":   {"bg": BG_ELEVATED, "fg": WARNING, "hover": "#3A2F1A", "active": "#4A3A1F", "border": "#4A3A1F"},
+        }.get(variant, None)
+        if palette is None:
+            palette = {"bg": BG_ELEVATED, "fg": TEXT_PRIMARY, "hover": BG_OVERLAY, "active": BG_HIGHLIGHT, "border": BORDER_DEFAULT}
+
+        sizing = {
+            "sm": {"padx": 10, "pady": 3, "font": (FONT_FAMILY, 8, "bold")},
+            "md": {"padx": 14, "pady": 6, "font": FONT_BUTTON},
+            "lg": {"padx": 20, "pady": 9, "font": (FONT_FAMILY, 10, "bold")},
+        }.get(size, None)
+        if sizing is None:
+            sizing = {"padx": 14, "pady": 6, "font": FONT_BUTTON}
+
+        label = f"{icon}  {text}".strip() if icon else text
+
+        btn = tk.Button(
+            parent, text=label, command=command,
+            bg=palette["bg"], fg=palette["fg"],
+            activebackground=palette["active"], activeforeground=palette["fg"],
+            font=sizing["font"], relief="flat", bd=0,
+            highlightthickness=1, highlightbackground=palette["border"],
+            highlightcolor=palette["border"],
+            padx=sizing["padx"], pady=sizing["pady"],
+            cursor="hand2", state=state,
+        )
+
+        def _on_enter(_e):
+            if str(btn["state"]) == "disabled":
+                return
+            btn.configure(bg=palette["hover"])
+
+        def _on_leave(_e):
+            if str(btn["state"]) == "disabled":
+                return
+            btn.configure(bg=palette["bg"])
+
+        btn.bind("<Enter>", _on_enter)
+        btn.bind("<Leave>", _on_leave)
+        # Guardar paleta para que enable/disable refresque correctamente
+        btn._pill_palette = palette
+        return btn
+
+    def _set_pill_state(self, btn, *, enabled: bool, variant: str | None = None):
+        """Habilita/deshabilita un pill button preservando hover y opcionalmente cambia variant."""
+        if not btn:
+            return
+        if variant is not None:
+            palette = {
+                "primary":   {"bg": BRAND, "fg": "#FFFFFF", "hover": BRAND_HOVER, "active": BRAND_ACTIVE, "border": BRAND},
+                "secondary": {"bg": BG_ELEVATED, "fg": TEXT_PRIMARY, "hover": BG_OVERLAY, "active": BG_HIGHLIGHT, "border": BORDER_DEFAULT},
+                "ghost":     {"bg": BG_SUBTLE, "fg": TEXT_SECONDARY, "hover": BG_ELEVATED, "active": BG_OVERLAY, "border": BORDER_SUBTLE},
+                "danger":    {"bg": BG_ELEVATED, "fg": DANGER, "hover": "#3A1F22", "active": "#4A2025", "border": "#4A2025"},
+                "success":   {"bg": BG_ELEVATED, "fg": SUCCESS, "hover": "#1A3A28", "active": "#1F4A30", "border": "#1F4A30"},
+                "warning":   {"bg": BG_ELEVATED, "fg": WARNING, "hover": "#3A2F1A", "active": "#4A3A1F", "border": "#4A3A1F"},
+            }.get(variant, btn._pill_palette)
+            btn._pill_palette = palette
+            btn.configure(bg=palette["bg"], fg=palette["fg"],
+                           activebackground=palette["active"], activeforeground=palette["fg"],
+                           highlightbackground=palette["border"], highlightcolor=palette["border"])
+        if enabled:
+            btn.configure(state="normal", cursor="hand2")
+            btn.configure(bg=btn._pill_palette["bg"], fg=btn._pill_palette["fg"])
+        else:
+            btn.configure(state="disabled", cursor="arrow")
+            btn.configure(bg=BG_ELEVATED, fg=TEXT_DISABLED)
+
+    # ── Micro-feedback "flash saved" ─────────────────────────────────────
+    def _flash_saved(self, widget, text: str = "✓ guardado", duration_ms: int = 1400):
+        """Muestra un texto verde temporal y lo borra tras `duration_ms`.
+        Uso: self._flash_saved(self._wait_saved_lbl). El widget debe ser un
+        Label (cualquier cosa con `config(text=...)`)."""
+        if widget is None:
+            return
+        try:
+            widget.config(text=text, fg=SUCCESS)
+        except Exception:
+            return
+        # Cancelar un flash previo si existía
+        prev = getattr(widget, "_flash_after_id", None)
+        if prev is not None:
+            try:
+                widget.after_cancel(prev)
+            except Exception:
+                pass
+        def _clear():
+            try:
+                widget.config(text="")
+            except Exception:
+                pass
+            widget._flash_after_id = None
+        widget._flash_after_id = widget.after(duration_ms, _clear)
+
+    # ── Status pill (header indicator) ────────────────────────────────────
+    def _make_status_pill(self, parent):
+        """Pildora con dot+texto+meta. Devuelve dict con setters: set_status(state, text, meta)."""
+        wrap = tk.Frame(parent, bg=BG_ELEVATED, highlightthickness=1,
+                         highlightbackground=BORDER_DEFAULT)
+        inner = tk.Frame(wrap, bg=BG_ELEVATED, padx=12, pady=6)
+        inner.pack(fill="both", expand=True)
+
+        dot = tk.Label(inner, text="●", bg=BG_ELEVATED, fg=DANGER,
+                        font=(FONT_FAMILY, 10))
+        dot.pack(side="left")
+        text_lbl = tk.Label(inner, text="Detenido", bg=BG_ELEVATED, fg=TEXT_PRIMARY,
+                             font=FONT_BODY_BOLD)
+        text_lbl.pack(side="left", padx=(SP_2, 0))
+        meta_lbl = tk.Label(inner, text="", bg=BG_ELEVATED, fg=TEXT_TERTIARY,
+                             font=FONT_CAPTION)
+        meta_lbl.pack(side="left", padx=(SP_3, 0))
+
+        def set_status(state: str, text: str = "", meta: str = ""):
+            color_map = {
+                "stopped":  DANGER,
+                "running":  SUCCESS,
+                "paused":   WARNING,
+                "warn":     WARNING,
+                "info":     INFO,
+                "idle":     TEXT_TERTIARY,
+            }
+            color = color_map.get(state, TEXT_TERTIARY)
+            dot.configure(fg=color)
+            if text:
+                text_lbl.configure(text=text)
+            meta_lbl.configure(text=meta)
+
+        wrap.set_status = set_status
+        wrap._pill_dot = dot
+        wrap._pill_text = text_lbl
+        wrap._pill_meta = meta_lbl
+        return wrap
+
+    # ── Card (elevated container) ─────────────────────────────────────────
+    def _make_card(self, parent, padding: int = SP_4):
+        """Frame con fondo elevado y borde sutil. Para agrupar widgets."""
+        outer = tk.Frame(parent, bg=BG_ELEVATED, highlightthickness=1,
+                          highlightbackground=BORDER_SUBTLE)
+        inner = tk.Frame(outer, bg=BG_ELEVATED, padx=padding, pady=padding)
+        inner.pack(fill="both", expand=True)
+        return outer, inner
+
+    # ── Section title ─────────────────────────────────────────────────────
+    def _section_title(self, parent, text: str, subtitle: str = ""):
+        parent_bg = parent.cget("bg") if hasattr(parent, "cget") else BG
+        wrap = tk.Frame(parent, bg=parent_bg)
+        wrap.pack(fill="x", pady=(SP_4, SP_2))
+        tk.Label(wrap, text=text.upper(), bg=parent_bg, fg=TEXT_SECONDARY,
+                 font=FONT_LABEL).pack(anchor="w")
+        if subtitle:
+            tk.Label(wrap, text=subtitle, bg=parent_bg, fg=TEXT_TERTIARY,
+                     font=FONT_CAPTION).pack(anchor="w", pady=(2, 0))
+        return wrap
+
+    # ── ttk theme init ────────────────────────────────────────────────────
+    def _init_ttk_theme(self):
+        """Configura todos los widgets ttk con el design system."""
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+
+        # Notebook — tabs compactas con underline accent
+        style.configure("Pro.TNotebook",
+                        background=BG_BASE, borderwidth=0,
+                        tabmargins=[SP_2, SP_2, SP_2, 0])
+        style.configure("Pro.TNotebook.Tab",
+                        background=BG_BASE, foreground=TEXT_TERTIARY,
+                        font=(FONT_FAMILY, 9, "bold"),
+                        padding=[SP_3, SP_2], borderwidth=0)
+        style.map("Pro.TNotebook.Tab",
+                  background=[("selected", BG_BASE), ("active", BG_SUBTLE)],
+                  foreground=[("selected", TEXT_PRIMARY), ("active", TEXT_SECONDARY)],
+                  bordercolor=[("selected", BRAND)],
+                  expand=[("selected", [0, 0, 0, 0])])
+        style.layout("Pro.TNotebook.Tab", [
+            ("Notebook.tab", {"sticky": "nswe", "children": [
+                ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
+                    ("Notebook.label", {"side": "top", "sticky": ""}),
+                ]}),
+            ]}),
+        ])
+
+        # Treeview
+        style.configure("Pro.Treeview",
+                        background=BG_ELEVATED, fieldbackground=BG_ELEVATED,
+                        foreground=TEXT_PRIMARY, borderwidth=0,
+                        font=FONT_BODY, rowheight=24)
+        style.map("Pro.Treeview",
+                  background=[("selected", BRAND_SOFT)],
+                  foreground=[("selected", TEXT_PRIMARY)])
+        style.configure("Pro.Treeview.Heading",
+                        background=BG_SUBTLE, foreground=TEXT_SECONDARY,
+                        font=FONT_LABEL, relief="flat", borderwidth=0,
+                        padding=[SP_3, SP_2])
+        style.map("Pro.Treeview.Heading",
+                  background=[("active", BG_OVERLAY)])
+
+        # Scrollbar
+        style.configure("Pro.Vertical.TScrollbar",
+                        background=BG_SUBTLE, troughcolor=BG_BASE,
+                        borderwidth=0, arrowsize=12, relief="flat")
+        style.map("Pro.Vertical.TScrollbar",
+                  background=[("active", BG_OVERLAY), ("pressed", BG_HIGHLIGHT)])
+
+        # Entry / Combobox / Spinbox
+        for tname in ("Pro.TEntry", "Pro.TCombobox", "Pro.TSpinbox"):
+            style.configure(tname,
+                            fieldbackground=BG_ELEVATED, background=BG_ELEVATED,
+                            foreground=TEXT_PRIMARY, bordercolor=BORDER_DEFAULT,
+                            lightcolor=BORDER_DEFAULT, darkcolor=BORDER_DEFAULT,
+                            insertcolor=TEXT_PRIMARY, padding=SP_2,
+                            font=FONT_BODY)
+            style.map(tname,
+                      bordercolor=[("focus", BRAND), ("active", BORDER_STRONG)],
+                      lightcolor=[("focus", BRAND)],
+                      darkcolor=[("focus", BRAND)],
+                      foreground=[("disabled", TEXT_DISABLED)])
+
+        # TButton (secundario)
+        style.configure("Pro.TButton",
+                        background=BG_ELEVATED, foreground=TEXT_PRIMARY,
+                        font=FONT_BUTTON, relief="flat", borderwidth=1,
+                        bordercolor=BORDER_DEFAULT, padding=[SP_3, SP_2])
+        style.map("Pro.TButton",
+                  background=[("active", BG_OVERLAY), ("pressed", BG_HIGHLIGHT)],
+                  bordercolor=[("focus", BRAND)])
+
+        # Aliases legacy (por compatibilidad con codigo existente)
+        for legacy in ("Dark.TNotebook", "TNotebook"):
+            style.configure(legacy, background=BG_BASE, borderwidth=0,
+                            tabmargins=[SP_2, SP_2, SP_2, 0])
+        style.configure("Dark.TNotebook.Tab",
+                        background=BG_BASE, foreground=TEXT_TERTIARY,
+                        font=(FONT_FAMILY, 9, "bold"),
+                        padding=[SP_3, SP_2], borderwidth=0)
+        style.map("Dark.TNotebook.Tab",
+                  background=[("selected", BG_BASE), ("active", BG_SUBTLE)],
+                  foreground=[("selected", TEXT_PRIMARY), ("active", TEXT_SECONDARY)])
 
     def _collapsible_section(self, parent, title, start_collapsed=False):
-        """Crea una seccion colapsable. Devuelve (header_frame, content_frame)."""
+        """Crea una seccion colapsable con chevron + hover. Devuelve (header_frame, content_frame)."""
         state = {"collapsed": start_collapsed}
 
         parent_bg = parent.cget("bg") if hasattr(parent, "cget") else BG
-        header = tk.Frame(parent, bg=parent_bg)
-        header.pack(fill="x", pady=(6, 0))
 
-        arrow = "▶" if start_collapsed else "▼"
-        lbl = tk.Label(header, text=f"{arrow} {title.upper()}", bg=parent_bg, fg=SUBTEXT,
-                       font=("Segoe UI", 9), cursor="hand2")
+        header = tk.Frame(parent, bg=parent_bg)
+        header.pack(fill="x", pady=(SP_3, 0))
+
+        # Banda interior con padding y hover sutil
+        band = tk.Frame(header, bg=parent_bg, cursor="hand2")
+        band.pack(fill="x")
+
+        chevron = tk.Label(band, text=("▸" if start_collapsed else "▾"),
+                            bg=parent_bg, fg=TEXT_TERTIARY,
+                            font=(FONT_FAMILY, 9), cursor="hand2")
+        chevron.pack(side="left", padx=(0, SP_2))
+
+        lbl = tk.Label(band, text=title.upper(), bg=parent_bg, fg=TEXT_SECONDARY,
+                       font=FONT_LABEL, cursor="hand2")
         lbl.pack(side="left")
+
+        # Hairline bajo el header
+        underline = tk.Frame(header, bg=BORDER_SUBTLE, height=1)
+        underline.pack(fill="x", pady=(SP_2, 0))
 
         content = tk.Frame(parent, bg=parent_bg)
         if not start_collapsed:
-            content.pack(fill="x", pady=(4, 0))
+            content.pack(fill="x", pady=(SP_3, 0))
 
-        def toggle(e=None):
+        def toggle(_e=None):
             if state["collapsed"]:
-                content.pack(fill="x", pady=(4, 0))
-                lbl.config(text=f"▼ {title.upper()}")
+                content.pack(fill="x", pady=(SP_3, 0))
+                chevron.config(text="▾")
             else:
                 content.pack_forget()
-                lbl.config(text=f"▶ {title.upper()}")
+                chevron.config(text="▸")
             state["collapsed"] = not state["collapsed"]
 
-        lbl.bind("<Button-1>", toggle)
+        for w in (band, chevron, lbl):
+            w.bind("<Button-1>", toggle)
+            w.bind("<Enter>", lambda _e: lbl.config(fg=TEXT_PRIMARY))
+            w.bind("<Leave>", lambda _e: lbl.config(fg=TEXT_SECONDARY))
         return header, content
 
     def _is_descendant_widget(self, widget, ancestor) -> bool:
@@ -684,55 +1055,15 @@ class App(tk.Tk):
         return self._scroll_canvas_from_event(canvas, ev)
 
     def _make_tab_detachable(self, notebook, tab, title: str):
-        """Agrega funcionalidad de detach/reattach a un frame de tab.
-        Añade un botón ⤢ overlay en la esquina superior derecha del tab."""
-        state = {"detached": False}
-
-        btn_pop = tk.Button(
-            tab, text="⤢", bg=CARD, fg=DIM,
-            font=("Segoe UI", 8), relief="flat", padx=4, pady=1,
-            cursor="hand2", bd=0, highlightthickness=0,
-            activebackground=HOVER, activeforeground=TEXT,
-        )
-        # Colocar en esquina superior derecha con place
-        btn_pop.place(relx=1.0, y=2, anchor="ne", x=-2)
-
-        def _detach():
-            if state["detached"]:
-                return
-            state["detached"] = True
-            notebook.forget(tab)
-            try:
-                tab.tk.call("wm", "manage", tab)
-                tab.tk.call("wm", "protocol", tab, "WM_DELETE_WINDOW",
-                            tab.register(_reattach))
-            except Exception:
-                pass
-            tab.wm_title(f"Dofus AutoFarm — {title}")
-            tab.wm_geometry("1000x700")
-            tab.wm_minsize(600, 400)
-            tab.lift()
-            btn_pop.config(text="✕ Reinsertar", command=_reattach)
-
-        def _reattach():
-            if not state["detached"]:
-                return
-            state["detached"] = False
-            try:
-                tab.tk.call("wm", "forget", tab)
-            except Exception:
-                pass
-            notebook.add(tab, text=f"  {title}  ")
-            notebook.select(tab)
-            btn_pop.config(text="⤢", command=_detach)
-
-        btn_pop.config(command=_detach)
+        # Deprecated: la funcionalidad de "detach" se retiró para reducir
+        # ruido visual. Se deja como no-op por compatibilidad con callers.
+        return
 
     def _make_direct_tab(self, notebook, title: str):
         """Tab con fill=both directo (sin canvas scroll interno).
         Devuelve el frame contenedor."""
         tab = tk.Frame(notebook, bg=BG)
-        notebook.add(tab, text=f"  {title}  ")
+        notebook.add(tab, text=title)
         self._make_tab_detachable(notebook, tab, title)
         content = tk.Frame(tab, bg=BG)
         content.pack(fill="both", expand=True)
@@ -741,7 +1072,7 @@ class App(tk.Tk):
     def _make_scrollable_tab(self, notebook, title: str):
         """Crea una pestaña con canvas scrolleable. Devuelve (tab_frame, body_frame)."""
         tab = tk.Frame(notebook, bg=BG)
-        notebook.add(tab, text=f"  {title}  ")
+        notebook.add(tab, text=title)
         self._make_tab_detachable(notebook, tab, title)
 
         canvas = tk.Canvas(tab, bg=BG, highlightthickness=0)
@@ -760,80 +1091,131 @@ class App(tk.Tk):
         return tab, body
 
     def _build_ui(self):
-        # ── Header fijo (estilo v2: PANEL bg + border-bottom) ────────────
-        header = tk.Frame(self, bg=PANEL, pady=0)
+        # Inicializar tema ttk completo
+        self._init_ttk_theme()
+
+        # ── Header (BG_SUBTLE, hairline inferior, layout 3 columnas) ─────
+        header = tk.Frame(self, bg=BG_SUBTLE)
         header.pack(fill="x")
         self._header_frame = header
+        # Hairline inferior (border-bottom)
+        tk.Frame(header, bg=BORDER_DEFAULT, height=1).pack(fill="x", side="bottom")
 
-        # Borde inferior del header
-        tk.Frame(header, bg=BORDER, height=1).pack(fill="x", side="bottom")
+        # ── Banner de deformación de mapa (oculto inicialmente) ─────────
+        self._deformation_banner = tk.Frame(self, bg=DANGER)
+        self._deformation_banner_text = tk.StringVar(value="")
+        self._deformation_banner_payload: dict | None = None
+        banner_inner = tk.Frame(self._deformation_banner, bg=DANGER)
+        banner_inner.pack(fill="x", padx=SP_4, pady=SP_2)
+        tk.Label(
+            banner_inner, text="⚠", bg=DANGER, fg="#FFFFFF",
+            font=(FONT_FAMILY, 14, "bold"),
+        ).pack(side="left", padx=(0, SP_2))
+        tk.Label(
+            banner_inner, textvariable=self._deformation_banner_text,
+            bg=DANGER, fg="#FFFFFF", font=FONT_BODY_BOLD, anchor="w", justify="left",
+        ).pack(side="left", fill="x", expand=True)
+        self._make_pill_button(
+            banner_inner, "CALIBRAR", command=self._open_map_calibration_dialog,
+            variant="primary", size="sm",
+        ).pack(side="right", padx=(SP_2, 0))
+        self._make_pill_button(
+            banner_inner, "IGNORAR", command=self._dismiss_map_deformation_banner,
+            variant="ghost", size="sm",
+        ).pack(side="right")
+        # Iniciar oculto
+        self._deformation_banner.pack_forget()
 
-        inner = tk.Frame(header, bg=PANEL, pady=10)
-        inner.pack(fill="x")
+        inner = tk.Frame(header, bg=BG_SUBTLE)
+        inner.pack(fill="x", padx=SP_5, pady=SP_3)
 
-        # Columna izquierda: logo
-        left = tk.Frame(inner, bg=PANEL)
-        left.pack(side="left", padx=14)
+        # ── Columna izquierda: logo (icono cuadrado + wordmark) ──────────
+        left = tk.Frame(inner, bg=BG_SUBTLE)
+        left.pack(side="left")
         self._header_left = left
-        tk.Label(left, text="DOFUS AUTOFARM", bg=PANEL, fg=BLUE,
-                 font=("Segoe UI", 14, "bold")).pack(anchor="w")
 
-        # Columna central: dot de estado + texto
-        center = tk.Frame(inner, bg=PANEL)
-        center.pack(side="left", padx=12, fill="x", expand=True)
-        self._header_status_dot = tk.Label(center, text="●", bg=PANEL, fg=RED,
-                                           font=("Segoe UI", 9))
+        # Logo (squircle ambar con engranaje)
+        logo_img = None
+        try:
+            logo_path = os.path.join(os.path.dirname(__file__), "..", "assets", "brand", "logo_48.png")
+            if os.path.exists(logo_path):
+                pil = Image.open(logo_path).convert("RGBA")
+                pil = pil.resize((28, 28), Image.LANCZOS)
+                logo_img = ImageTk.PhotoImage(pil)
+        except Exception:
+            logo_img = None
+        if logo_img is not None:
+            self._header_logo_img = logo_img   # retener ref
+            tk.Label(left, image=logo_img, bg=BG_SUBTLE,
+                     borderwidth=0, highlightthickness=0).pack(side="left")
+        else:
+            # Fallback: cuadrado ambar con "D"
+            logo_box = tk.Frame(left, bg=BRAND, width=24, height=24,
+                                 highlightthickness=0)
+            logo_box.pack(side="left")
+            logo_box.pack_propagate(False)
+            tk.Label(logo_box, text="D", bg=BRAND, fg="#FFFFFF",
+                     font=(FONT_FAMILY, 11, "bold")).pack(expand=True)
+
+        wordmark = tk.Frame(left, bg=BG_SUBTLE)
+        wordmark.pack(side="left", padx=(SP_2, 0))
+        tk.Label(wordmark, text="Dofus Autofarm", bg=BG_SUBTLE, fg=TEXT_PRIMARY,
+                 font=(FONT_FAMILY, 11, "bold")).pack(anchor="w")
+
+        # ── Columna central: status pill ─────────────────────────────────
+        center = tk.Frame(inner, bg=BG_SUBTLE)
+        center.pack(side="left", padx=SP_5, fill="x", expand=True)
+        self._header_center = center
+
+        pill_wrap = tk.Frame(center, bg=BG_ELEVATED, highlightthickness=1,
+                              highlightbackground=BORDER_DEFAULT)
+        pill_wrap.pack(side="left")
+        pill_inner = tk.Frame(pill_wrap, bg=BG_ELEVATED, padx=SP_3, pady=SP_2 - 1)
+        pill_inner.pack(fill="both", expand=True)
+        # Mantenemos los nombres antiguos para que el resto del codigo siga funcionando.
+        self._header_status_dot = tk.Label(pill_inner, text="●", bg=BG_ELEVATED, fg=DANGER,
+                                            font=(FONT_FAMILY, 11))
         self._header_status_dot.pack(side="left")
-        self._header_status_lbl = tk.Label(center, text="Detenido", bg=PANEL, fg=TEXT,
-                                            font=("Segoe UI", 10, "bold"))
-        self._header_status_lbl.pack(side="left", padx=(4, 0))
-        self._header_info_lbl = tk.Label(center, text="", bg=PANEL, fg=SUBTEXT,
-                                          font=("Segoe UI", 9))
-        self._header_info_lbl.pack(side="left", padx=(8, 0))
+        self._header_status_lbl = tk.Label(pill_inner, text="Detenido",
+                                            bg=BG_ELEVATED, fg=TEXT_PRIMARY,
+                                            font=FONT_BODY_BOLD)
+        self._header_status_lbl.pack(side="left", padx=(SP_2, 0))
+        self._header_info_lbl = tk.Label(center, text="", bg=BG_SUBTLE,
+                                          fg=TEXT_TERTIARY, font=FONT_CAPTION)
+        self._header_info_lbl.pack(side="left", padx=(SP_3, 0))
 
-        # Columna derecha: botones (TEST | ▶ INICIAR | ⏸ PAUSAR)
-        right = tk.Frame(inner, bg=PANEL)
-        right.pack(side="right", padx=14)
+        # ── Columna derecha: botones de accion (pills) ───────────────────
+        right = tk.Frame(inner, bg=BG_SUBTLE)
+        right.pack(side="right")
         self._header_right = right
-        self.btn_test = tk.Button(right, text="TEST", bg=CARD, fg=SUBTEXT,
-                                  font=("Segoe UI", 9, "bold"),
-                                  relief="flat", padx=12, pady=5,
-                                  bd=1, highlightthickness=1,
-                                  highlightbackground=BORDER,
-                                  cursor="hand2", command=self._start_test_mode)
-        self.btn_test.pack(side="left", padx=(0, 6))
-        self.btn_toggle = tk.Button(right, text="▶  INICIAR", bg=ACCENT, fg="white",
-                                    font=("Segoe UI", 9, "bold"),
-                                    relief="flat", padx=14, pady=5,
-                                    bd=1, highlightthickness=1,
-                                    highlightbackground=BLUE,
-                                    cursor="hand2", command=self._toggle_bot)
-        self.btn_toggle.pack(side="left", padx=(0, 6))
-        self.btn_pause = tk.Button(right, text="⏸  PAUSAR", bg=CARD, fg=SUBTEXT,
-                                   font=("Segoe UI", 9, "bold"),
-                                   relief="flat", padx=14, pady=5,
-                                   bd=1, highlightthickness=1,
-                                   highlightbackground=BORDER,
-                                   cursor="hand2", command=self._pause_bot,
-                                   state="disabled")
+
+        # Botones principales. El botón TEST se mantiene oculto (dev).
+        self.btn_test = self._make_pill_button(
+            right, "TEST", command=self._start_test_mode,
+            variant="ghost", size="sm",
+        )
+        # No mostramos TEST en el layout productivo; se deja accesible por hotkey.
+
+        self.btn_toggle = self._make_pill_button(
+            right, "Iniciar", icon="▶", command=self._toggle_bot,
+            variant="primary", size="md",
+        )
+        self.btn_toggle.pack(side="left", padx=(0, SP_2))
+
+        self.btn_pause = self._make_pill_button(
+            right, "Pausar", icon="⏸", command=self._pause_bot,
+            variant="secondary", size="md", state="disabled",
+        )
+        self._set_pill_state(self.btn_pause, enabled=False, variant="secondary")
         self.btn_pause.pack(side="left")
 
-        # ── Notebook (pestañas — estilo v2) ──────────────────────────────
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure("Dark.TNotebook",
-                        background=PANEL, tabmargins=[0, 0, 0, 0],
-                        borderwidth=0)
-        style.configure("Dark.TNotebook.Tab",
-                        background=PANEL, foreground=SUBTEXT,
-                        font=("Segoe UI", 9),
-                        padding=[14, 8],
-                        borderwidth=0)
-        style.map("Dark.TNotebook.Tab",
-                  background=[("selected", PANEL), ("active", HOVER)],
-                  foreground=[("selected", BLUE), ("active", TEXT)])
+        # Hint sutil de hotkeys — sólo visible en layouts anchos
+        self._hotkey_hint = tk.Label(center, text="F12 · F8 · F10",
+                                      bg=BG_SUBTLE, fg=TEXT_TERTIARY, font=FONT_CAPTION)
+        self._hotkey_hint.pack(side="left", padx=(SP_3, 0))
 
-        notebook = ttk.Notebook(self, style="Dark.TNotebook")
+        # ── Notebook (Pro.TNotebook + estilo Dark.TNotebook ya definidos) ──
+        notebook = ttk.Notebook(self, style="Pro.TNotebook")
         self._notebook = notebook
         notebook.pack(fill="both", expand=True, padx=0, pady=0)
         self.bind_all("<MouseWheel>", self._handle_global_mousewheel, add="+")
@@ -890,11 +1272,7 @@ class App(tk.Tk):
         self._sep(ajustes_body)
         self._build_controls(ajustes_body)
 
-        # ── Status bar delgada al fondo ──────────────────────────────────
-        status_bar = tk.Frame(self, bg=PANEL)
-        status_bar.pack(fill="x", side="bottom")
-        self._bottom_frame = status_bar
-        self._build_status(status_bar)
+        # Status bar inferior removida — el estado vive en el pill del header.
 
     def _build_resources(self, parent):
         self.resources_frame = tk.Frame(parent, bg=PANEL)
@@ -965,38 +1343,44 @@ class App(tk.Tk):
                                          font=("Segoe UI", 8, "bold"), width=5)
                     lbl_count.pack(side="right", padx=(0, 2))
 
-                    tk.Button(row, text="Chequear", bg=YELLOW, fg=BG,
-                              font=("Segoe UI", 7), relief="flat", padx=6, pady=2,
-                              cursor="hand2",
-                              command=lambda n=res_name, p=prof_name, lbl=lbl_count:
-                                  self._check_resource(n, p, lbl)).pack(side="right", padx=(4, 0))
+                    self._make_pill_button(
+                        row, "Chequear",
+                        command=lambda n=res_name, p=prof_name, lbl=lbl_count:
+                            self._check_resource(n, p, lbl),
+                        variant="secondary", size="sm",
+                    ).pack(side="right", padx=(SP_1, 0))
 
-                    tk.Button(row, text="Recapturar", bg=CARD, fg=SUBTEXT,
-                              font=("Segoe UI", 7), relief="flat", padx=6, pady=2,
-                              cursor="hand2",
-                              command=lambda n=res_name, p=prof_name:
-                                  self._open_capture(prefill=n, profession=p)).pack(side="right", padx=(4, 0))
+                    self._make_pill_button(
+                        row, "Recapturar",
+                        command=lambda n=res_name, p=prof_name:
+                            self._open_capture(prefill=n, profession=p),
+                        variant="ghost", size="sm",
+                    ).pack(side="right", padx=(SP_1, 0))
 
-                    tk.Button(row, text="Eliminar", bg=RED, fg=TEXT,
-                              font=("Segoe UI", 7), relief="flat", padx=6, pady=2,
-                              cursor="hand2",
-                              command=lambda n=res_name, p=prof_name:
-                                  self._delete_resource(p, n)).pack(side="right", padx=(4, 0))
+                    self._make_pill_button(
+                        row, "Eliminar",
+                        command=lambda n=res_name, p=prof_name:
+                            self._delete_resource(p, n),
+                        variant="danger", size="sm",
+                    ).pack(side="right", padx=(SP_1, 0))
 
                 # Boton agregar recurso a esta profesion
                 add_row = tk.Frame(lf, bg=PANEL)
-                add_row.pack(fill="x", padx=8, pady=(2, 6))
-                tk.Button(add_row, text=f"+ Capturar recurso", bg=BLUE, fg=BG,
-                          font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
-                          cursor="hand2",
-                          command=lambda p=prof_name: self._open_capture(profession=p)).pack(side="left")
+                add_row.pack(fill="x", padx=SP_2, pady=(SP_1, SP_2))
+                self._make_pill_button(
+                    add_row, "+ Capturar recurso",
+                    command=lambda p=prof_name: self._open_capture(profession=p),
+                    variant="primary", size="sm",
+                ).pack(side="left")
 
         # Boton nueva profesion
         new_row = tk.Frame(self.resources_frame, bg=PANEL)
-        new_row.pack(fill="x", padx=10, pady=(4, 6))
-        tk.Button(new_row, text="+ Nueva profesion", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=3,
-                  cursor="hand2", command=self._new_profession).pack(side="left")
+        new_row.pack(fill="x", padx=SP_3, pady=(SP_1, SP_2))
+        self._make_pill_button(
+            new_row, "+ Nueva profesion",
+            command=self._new_profession,
+            variant="secondary", size="sm",
+        ).pack(side="left")
 
         if self.resource_nodes_frame is not None:
             self._refresh_resource_nodes_editor()
@@ -1033,112 +1417,109 @@ class App(tk.Tk):
         frame = self.resource_nodes_frame
 
         help_row = tk.Frame(frame, bg=PANEL)
-        help_row.pack(fill="x", padx=10, pady=(8, 0))
+        help_row.pack(fill="x", padx=SP_3, pady=(SP_2, 0))
         tk.Label(
             help_row,
-            text="Esta herramienta usa map_id del sniffer + sprite del recurso seleccionado. Puedes chequear visibles y guardar automaticamente los nodos detectados en el mapa actual.",
+            text="map_id del sniffer + sprite seleccionado. Detecta y guarda nodos en el mapa actual.",
             bg=PANEL,
-            fg=SUBTEXT,
-            font=("Segoe UI", 8, "italic"),
+            fg=TEXT_TERTIARY,
+            font=FONT_CAPTION,
             wraplength=380,
             justify="left",
         ).pack(anchor="w")
 
         route_row = tk.Frame(frame, bg=PANEL)
-        route_row.pack(fill="x", padx=10, pady=(8, 4))
-        tk.Label(route_row, text="Ruta asignada a recursos:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
+        route_row.pack(fill="x", padx=SP_3, pady=(SP_2, SP_1))
+        tk.Label(route_row, text="Ruta asignada:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
         route_names = sorted(self._route_profiles_cfg().keys())
         farming_cfg = self.config_data.setdefault("farming", {})
         default_route = farming_cfg.get("route_profile") or (route_names[0] if route_names else "")
         self._resource_route_var = tk.StringVar(value=default_route)
         self._resource_route_cb = ttk.Combobox(route_row, textvariable=self._resource_route_var,
-                                               state="readonly", width=20, values=route_names)
-        self._resource_route_cb.pack(side="left", padx=(8, 4))
+                                               state="readonly", width=20, values=route_names,
+                                               style="Pro.TCombobox")
+        self._resource_route_cb.pack(side="left", padx=(SP_2, SP_1))
         self._resource_route_cb.bind("<<ComboboxSelected>>", lambda e: self._save_resource_route_profile())
-        tk.Button(route_row, text="Guardar", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=1,
-                  cursor="hand2", command=self._save_resource_route_profile).pack(side="left")
+        self._make_pill_button(route_row, "Guardar", command=self._save_resource_route_profile,
+                               variant="success", size="sm").pack(side="left")
 
         top = tk.Frame(frame, bg=PANEL)
-        top.pack(fill="x", padx=10, pady=(8, 4))
+        top.pack(fill="x", padx=SP_3, pady=(SP_2, SP_1))
 
-        tk.Label(top, text="Map ID:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
-        tk.Label(top, textvariable=self._resource_node_map_var, bg=PANEL, fg=GREEN,
-                 font=("Consolas", 10, "bold")).pack(side="left", padx=(6, 0))
-        tk.Button(top, text="Usar actual", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._use_current_map_id_for_nodes).pack(side="right")
+        tk.Label(top, text="Map ID:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
+        tk.Label(top, textvariable=self._resource_node_map_var, bg=PANEL, fg=TEXT_PRIMARY,
+                 font=FONT_MONO).pack(side="left", padx=(SP_1, 0))
+        self._make_pill_button(top, "Usar actual",
+                               command=self._use_current_map_id_for_nodes,
+                               variant="ghost", size="sm").pack(side="right")
 
         status = tk.Frame(frame, bg=PANEL)
-        status.pack(fill="x", padx=10, pady=(0, 4))
-        tk.Label(status, textvariable=self._resource_node_status_var, bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 8, "italic")).pack(anchor="w")
+        status.pack(fill="x", padx=SP_3, pady=(0, SP_1))
+        tk.Label(status, textvariable=self._resource_node_status_var, bg=PANEL, fg=TEXT_TERTIARY,
+                 font=FONT_CAPTION).pack(anchor="w")
 
         form = tk.Frame(frame, bg=PANEL)
-        form.pack(fill="x", padx=10, pady=(2, 4))
+        form.pack(fill="x", padx=SP_3, pady=(SP_1, SP_1))
 
-        tk.Label(form, text="Profesion:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
+        tk.Label(form, text="Profesion:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).grid(row=0, column=0, sticky="w")
         self._resource_node_prof_cb = ttk.Combobox(
             form,
             textvariable=self._resource_node_prof_var,
             values=self._resource_profession_names(),
             state="readonly",
             width=18,
-            font=("Segoe UI", 9),
+            style="Pro.TCombobox",
         )
-        self._resource_node_prof_cb.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        self._resource_node_prof_cb.grid(row=0, column=1, sticky="ew", padx=(SP_2, 0))
         self._resource_node_prof_cb.bind("<<ComboboxSelected>>", lambda e: (
             self._refresh_resource_node_resource_choices(),
             self._load_profession_wait(),
         ))
-        tk.Button(form, text="+", bg=CARD, fg=GREEN,
-                  font=("Segoe UI", 9, "bold"), relief="flat", padx=6, pady=0,
-                  cursor="hand2", command=self._new_profession_from_nodes
-                  ).grid(row=0, column=2, padx=(4, 0))
+        self._make_pill_button(form, "+", command=self._new_profession_from_nodes,
+                               variant="ghost", size="sm"
+                               ).grid(row=0, column=2, padx=(SP_1, 0))
 
-        tk.Label(form, text="Recurso:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        tk.Label(form, text="Recurso:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).grid(row=1, column=0, sticky="w", pady=(SP_1, 0))
         self._resource_node_res_cb = ttk.Combobox(
             form,
             textvariable=self._resource_node_res_var,
             values=[],
             state="readonly",
             width=18,
-            font=("Segoe UI", 9),
+            style="Pro.TCombobox",
         )
-        self._resource_node_res_cb.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        self._resource_node_res_cb.grid(row=1, column=1, sticky="ew", padx=(SP_2, 0), pady=(SP_1, 0))
         self._resource_node_res_cb.bind("<<ComboboxSelected>>", lambda e: self._refresh_resource_node_sprite_preview())
-        tk.Button(form, text="+", bg=CARD, fg=GREEN,
-                  font=("Segoe UI", 9, "bold"), relief="flat", padx=6, pady=0,
-                  cursor="hand2", command=self._add_resource_to_profession
-                  ).grid(row=1, column=2, padx=(4, 0), pady=(6, 0))
+        self._make_pill_button(form, "+", command=self._add_resource_to_profession,
+                               variant="ghost", size="sm"
+                               ).grid(row=1, column=2, padx=(SP_1, 0), pady=(SP_1, 0))
 
-        tk.Label(form, text="Espera cosecha (s):", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        tk.Label(form, text="Espera cosecha (s):", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).grid(row=2, column=0, sticky="w", pady=(SP_1, 0))
         wait_row = tk.Frame(form, bg=PANEL)
-        wait_row.grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(6, 0))
+        wait_row.grid(row=2, column=1, columnspan=2, sticky="w", padx=(SP_2, 0), pady=(SP_1, 0))
         wait_spin = tk.Spinbox(
             wait_row,
             textvariable=self._resource_node_wait_var,
             from_=1.0, to=60.0, increment=0.5,
-            width=7, font=("Segoe UI", 9),
-            bg=CARD, fg=TEXT, buttonbackground=PANEL,
+            width=7, font=FONT_BODY,
+            bg=BG_ELEVATED, fg=TEXT_PRIMARY, buttonbackground=BG_SUBTLE,
             relief="flat",
+            highlightthickness=1, highlightbackground=BORDER_DEFAULT,
             command=self._save_profession_wait,
         )
         wait_spin.pack(side="left")
         wait_spin.bind("<FocusOut>", lambda e: self._save_profession_wait())
         wait_spin.bind("<Return>",   lambda e: self._save_profession_wait())
-        tk.Button(wait_row, text="Guardar", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=1,
-                  cursor="hand2", command=self._save_profession_wait
-                  ).pack(side="left", padx=(6, 0))
-        self._wait_saved_lbl = tk.Label(wait_row, text="", bg=PANEL, fg=GREEN,
-                                        font=("Segoe UI", 8))
-        self._wait_saved_lbl.pack(side="left", padx=(6, 0))
+        self._make_pill_button(wait_row, "Guardar", command=self._save_profession_wait,
+                               variant="success", size="sm").pack(side="left", padx=(SP_1, 0))
+        self._wait_saved_lbl = tk.Label(wait_row, text="", bg=PANEL, fg=SUCCESS,
+                                        font=FONT_CAPTION)
+        self._wait_saved_lbl.pack(side="left", padx=(SP_1, 0))
         form.grid_columnconfigure(1, weight=1)
 
         if not self._resource_node_prof_var.get():
@@ -1149,85 +1530,83 @@ class App(tk.Tk):
         self._load_profession_wait()
 
         sprite_frame = tk.Frame(frame, bg=PANEL)
-        sprite_frame.pack(fill="x", padx=10, pady=(0, 6))
+        sprite_frame.pack(fill="x", padx=SP_3, pady=(0, SP_2))
         self._resource_node_sprite_label = tk.Label(
             sprite_frame,
-            bg=BG,
+            bg=BG_BASE,
             width=72,
             height=72,
             relief="flat",
         )
         self._resource_node_sprite_label.pack(side="left")
         sprite_meta = tk.Frame(sprite_frame, bg=PANEL)
-        sprite_meta.pack(side="left", fill="x", expand=True, padx=(10, 0))
+        sprite_meta.pack(side="left", fill="x", expand=True, padx=(SP_3, 0))
         tk.Label(
             sprite_meta,
             textvariable=self._resource_node_sprite_name_var,
             bg=PANEL,
-            fg=TEXT,
-            font=("Segoe UI", 9, "bold"),
+            fg=TEXT_PRIMARY,
+            font=FONT_BODY_BOLD,
         ).pack(anchor="w")
         tk.Label(
             sprite_meta,
-            text="El sprite se usa para validar presencia local y para capturar visibles del mapa.",
+            text="Sprite usado para validar presencia y capturar visibles en el mapa.",
             bg=PANEL,
-            fg=SUBTEXT,
-            font=("Segoe UI", 8),
+            fg=TEXT_TERTIARY,
+            font=FONT_CAPTION,
             justify="left",
             wraplength=260,
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w", pady=(SP_1, 0))
 
+        # Acciones agrupadas en una sola fila con jerarquía visual clara:
+        # primarias (capturar/recapturar) + chequeo + destructiva al final.
         btns = tk.Frame(frame, bg=PANEL)
-        btns.pack(fill="x", padx=10, pady=(4, 6))
-        tk.Button(btns, text="Capturar sprite", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._capture_selected_resource_sprite).pack(side="left", padx=(0, 4))
-        tk.Button(btns, text="Recapturar sprite", bg=CARD, fg=SUBTEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._recapture_selected_resource_sprite).pack(side="left", padx=(0, 4))
-        tk.Button(btns, text="Chequear sprite", bg=YELLOW, fg=BG,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._check_selected_resource_on_map).pack(side="left", padx=(0, 4))
-
-        btns2 = tk.Frame(frame, bg=PANEL)
-        btns2.pack(fill="x", padx=10, pady=(0, 6))
-        tk.Button(btns2, text="Capturar visibles", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._capture_visible_resource_nodes).pack(side="left", padx=(0, 4))
-        tk.Button(btns2, text="Chequear en mapa", bg=YELLOW, fg=BG,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._check_selected_resource_on_map).pack(side="left", padx=(0, 4))
-        tk.Button(btns2, text="Eliminar nodo", bg=RED, fg=TEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._remove_resource_node).pack(side="left")
+        btns.pack(fill="x", padx=SP_3, pady=(SP_1, SP_2))
+        self._make_pill_button(btns, "Capturar sprite",
+                               command=self._capture_selected_resource_sprite,
+                               variant="secondary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(btns, "Recapturar",
+                               command=self._recapture_selected_resource_sprite,
+                               variant="ghost", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(btns, "Capturar visibles",
+                               command=self._capture_visible_resource_nodes,
+                               variant="primary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(btns, "Chequear",
+                               command=self._check_selected_resource_on_map,
+                               variant="secondary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(btns, "Eliminar nodo",
+                               command=self._remove_resource_node,
+                               variant="danger", size="sm").pack(side="right")
 
         check_row = tk.Frame(frame, bg=PANEL)
-        check_row.pack(fill="x", padx=10, pady=(0, 6))
+        check_row.pack(fill="x", padx=SP_3, pady=(0, SP_2))
         self._resource_node_check_lbl = tk.Label(
             check_row,
             text="Chequeo visual: pendiente",
             bg=PANEL,
-            fg=SUBTEXT,
-            font=("Segoe UI", 8, "italic"),
+            fg=TEXT_TERTIARY,
+            font=FONT_CAPTION,
         )
         self._resource_node_check_lbl.pack(anchor="w")
 
         list_wrap = tk.Frame(frame, bg=PANEL)
-        list_wrap.pack(fill="x", padx=10, pady=(0, 8))
-        tk.Label(list_wrap, text="Nodos guardados para este mapa:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(anchor="w")
+        list_wrap.pack(fill="x", padx=SP_3, pady=(0, SP_2))
+        tk.Label(list_wrap, text="Nodos guardados para este mapa", bg=PANEL,
+                 fg=TEXT_SECONDARY, font=FONT_LABEL).pack(anchor="w")
 
         lb_frame = tk.Frame(list_wrap, bg=PANEL)
-        lb_frame.pack(fill="x", pady=(2, 0))
+        lb_frame.pack(fill="x", pady=(SP_1, 0))
         self._resource_node_listbox = tk.Listbox(
             lb_frame,
             height=5,
-            bg=CARD,
-            fg=TEXT,
-            font=("Consolas", 9),
+            bg=BG_ELEVATED,
+            fg=TEXT_PRIMARY,
+            font=FONT_MONO,
             relief="flat",
-            selectbackground=GREEN,
-            selectforeground=BG,
+            highlightthickness=1,
+            highlightbackground=BORDER_SUBTLE,
+            selectbackground=BRAND_SOFT,
+            selectforeground=TEXT_PRIMARY,
             activestyle="none",
         )
         self._resource_node_listbox.pack(side="left", fill="x", expand=True)
@@ -1316,35 +1695,14 @@ class App(tk.Tk):
     def _build_main_module(self, parent):
         pbg = parent.cget("bg") if hasattr(parent, "cget") else BG
 
-        title = tk.Label(parent, text="▼ MODULO PRINCIPAL", bg=pbg, fg=SUBTEXT,
-                         font=("Segoe UI", 9), cursor="hand2")
-        title.pack(anchor="w")
-        title.bind("<Button-1>", lambda _e: self._toggle_main_module())
-        self._main_module_title_label = title
+        self._section_title(parent, "Configuracion general",
+                            subtitle="Actor ID del personaje activo")
 
-        content = tk.Frame(parent, bg=pbg)
-        content.pack(fill="x")
-        self._main_module_content = content
-
-        tk.Label(
-            content,
-            text="Selecciona el Actor ID del PJ actual. Si cambias de personaje, actualizalo aqui.",
-            bg=pbg,
-            fg=SUBTEXT,
-            font=("Segoe UI", 8),
-            justify="left",
-        ).pack(anchor="w", pady=(2, 8))
-
-        cards = tk.Frame(content, bg=pbg)
-        cards.pack(fill="x", pady=(0, 8))
-        self._main_module_cards = cards
-        self._build_main_summary_cards(cards)
-
-        actor_row = tk.Frame(content, bg=pbg)
-        actor_row.pack(fill="x")
+        actor_row = tk.Frame(parent, bg=pbg)
+        actor_row.pack(fill="x", pady=(SP_1, 0))
         self._main_module_form = actor_row
-        actor_label = tk.Label(actor_row, text="Actor ID del PJ actual:", bg=pbg, fg=TEXT,
-                               font=("Segoe UI", 9))
+        actor_label = tk.Label(actor_row, text="Actor ID:", bg=pbg, fg=TEXT_SECONDARY,
+                               font=FONT_BODY)
         actor_label.pack(side="left")
         self._actor_form_label = actor_label
         current_actor_id = str(self.config_data.get("bot", {}).get("actor_id", "") or "")
@@ -1353,25 +1711,21 @@ class App(tk.Tk):
             actor_row,
             textvariable=self._primary_actor_id_var,
             width=16,
-            bg=CARD,
-            fg=TEXT,
-            insertbackground=BLUE,
+            bg=BG_ELEVATED,
+            fg=TEXT_PRIMARY,
+            insertbackground=BRAND,
             relief="flat",
-            font=("Consolas", 10),
+            highlightthickness=1,
+            highlightbackground=BORDER_DEFAULT,
+            highlightcolor=BRAND,
+            font=FONT_MONO,
         )
-        actor_entry.pack(side="left", padx=(8, 6))
+        actor_entry.pack(side="left", padx=(SP_2, SP_2))
         self._actor_form_entry = actor_entry
-        actor_button = tk.Button(
-            actor_row,
-            text="Guardar",
-            bg=GREEN,
-            fg=BG,
-            font=("Segoe UI", 8, "bold"),
-            relief="flat",
-            padx=8,
-            pady=2,
-            cursor="hand2",
+        actor_button = self._make_pill_button(
+            actor_row, "Guardar",
             command=self._save_primary_actor_id,
+            variant="success", size="sm",
         )
         actor_button.pack(side="left")
         self._actor_form_button = actor_button
@@ -1379,47 +1733,16 @@ class App(tk.Tk):
         self._primary_actor_status_var = tk.StringVar(
             value=f"Actual: {current_actor_id or 'sin configurar'}"
         )
-        tk.Label(content, textvariable=self._primary_actor_status_var, bg=pbg, fg=SUBTEXT,
-                 font=("Segoe UI", 8, "italic")).pack(anchor="w", pady=(6, 0))
+        tk.Label(parent, textvariable=self._primary_actor_status_var, bg=pbg,
+                 fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(anchor="w", pady=(SP_2, 0))
 
     def _set_main_module_collapsed(self, collapsed: bool):
-        self._main_module_collapsed = bool(collapsed)
-        if self._main_module_title_label is not None:
-            arrow = "▶" if self._main_module_collapsed else "▼"
-            actor_value = self._main_runtime_actor_var.get() or "sin configurar"
-            profile_value = self._main_runtime_profile_var.get() or "-"
-            mode_value = self._main_runtime_mode_var.get() or "-"
-            summary = f"  ·  actor={actor_value}  ·  perfil={profile_value}  ·  modo={mode_value}"
-            self._main_module_title_label.config(
-                text=f"{arrow} MODULO PRINCIPAL{summary if self._main_module_collapsed else ''}"
-            )
-        if self._main_module_content is not None:
-            if self._main_module_collapsed:
-                self._main_module_content.pack_forget()
-            else:
-                self._main_module_content.pack(fill="x")
+        # No-op: el módulo principal ya no es colapsable (UI minimalista).
+        self._main_module_collapsed = False
 
     def _toggle_main_module(self):
-        self._set_main_module_collapsed(not self._main_module_collapsed)
-
-    def _build_main_summary_cards(self, parent):
-        cards = [
-            ("ACTOR ACTIVO", self._main_runtime_actor_var, GREEN),
-            ("PERFIL", self._main_runtime_profile_var, BLUE),
-            ("MODO", self._main_runtime_mode_var, YELLOW),
-            ("MAP ID", self._main_runtime_map_var, TEXT),
-            ("SNIFFER", self._main_runtime_sniffer_var, GREEN),
-        ]
-        for title, value_var, color in cards:
-            # Outer border frame
-            border = tk.Frame(parent, bg=BORDER, padx=1, pady=1)
-            border.pack(side="left", fill="x", expand=True, padx=(0, 8))
-            card = tk.Frame(border, bg=CARD, padx=10, pady=8)
-            card.pack(fill="both")
-            tk.Label(card, text=title, bg=CARD, fg=DIM,
-                     font=("Segoe UI", 8)).pack(anchor="w")
-            tk.Label(card, textvariable=value_var, bg=CARD, fg=color,
-                     font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(3, 0))
+        # No-op: compatibilidad con callers antiguos.
+        pass
 
     def _schedule_responsive_layout(self, _event=None):
         if self._responsive_after_id is not None:
@@ -1434,34 +1757,40 @@ class App(tk.Tk):
         width = max(1, int(self.winfo_width() or 0))
 
         if self._header_left is not None and self._header_right is not None:
+            center = getattr(self, "_header_center", None)
             self._header_left.pack_forget()
             self._header_right.pack_forget()
-            if width < 760:
-                self._header_left.pack(fill="x", padx=12, anchor="w")
-                self._header_right.pack(fill="x", padx=12, pady=(8, 0), anchor="w")
-                for button in (self.btn_test, self.btn_toggle, self.btn_pause):
-                    button.pack_configure(side="top", fill="x", padx=0, pady=(0, 6))
+            if center is not None:
+                center.pack_forget()
+            if width < 860:
+                # Layout vertical: logo / status / botones (apilados)
+                self._header_left.pack(fill="x", padx=SP_4, anchor="w")
+                if center is not None:
+                    center.pack(fill="x", padx=SP_4, pady=(SP_2, 0), anchor="w")
+                self._header_right.pack(fill="x", padx=SP_4, pady=(SP_2, 0), anchor="w")
+                for button in (self.btn_toggle, self.btn_pause):
+                    if button.winfo_manager():
+                        button.pack_configure(side="top", fill="x", padx=0, pady=(0, SP_2))
             else:
-                self._header_left.pack(side="left", padx=12)
-                self._header_right.pack(side="right", padx=12)
-                self.btn_test.pack_configure(side="left", fill="none", padx=(0, 6), pady=0)
-                self.btn_toggle.pack_configure(side="left", fill="none", padx=(0, 6), pady=0)
-                self.btn_pause.pack_configure(side="left", fill="none", padx=0, pady=0)
+                # Layout horizontal: orden estricto izquierda → centro → derecha
+                self._header_left.pack(side="left")
+                if center is not None:
+                    center.pack(side="left", padx=SP_5, fill="x", expand=True)
+                self._header_right.pack(side="right")
+                if self.btn_toggle.winfo_manager():
+                    self.btn_toggle.pack_configure(side="left", fill="none", padx=(0, SP_2), pady=0)
+                if self.btn_pause.winfo_manager():
+                    self.btn_pause.pack_configure(side="left", fill="none", padx=0, pady=0)
 
-        if self._main_module_content is not None:
-            # Solo colapsar automáticamente por ancho, no expandir (el usuario decide)
-            if width < 700 and not self._main_module_collapsed:
-                self._set_main_module_collapsed(True)
-
-        if self._main_module_cards is not None:
-            card_widgets = list(self._main_module_cards.winfo_children())
-            for idx, card in enumerate(card_widgets):
-                card.pack_forget()
-                if width < 760:
-                    card.pack(fill="x", expand=True, padx=0, pady=(0, 6))
-                else:
-                    padx = (0, 8) if idx < len(card_widgets) - 1 else 0
-                    card.pack(side="left", fill="x", expand=True, padx=padx, pady=0)
+        # Ocultar hint de hotkeys en layouts medio-angostos (<1020px)
+        hint = getattr(self, "_hotkey_hint", None)
+        if hint is not None and hint.winfo_exists():
+            if width < 1020:
+                if hint.winfo_manager():
+                    hint.pack_forget()
+            else:
+                if not hint.winfo_manager():
+                    hint.pack(side="left", padx=(SP_3, 0))
 
         if self._main_module_form is not None and self._actor_form_label is not None and self._actor_form_entry is not None and self._actor_form_button is not None:
             self._actor_form_label.pack_forget()
@@ -1496,26 +1825,35 @@ class App(tk.Tk):
         bot_cfg = self.config_data.get("bot", {})
         farming_cfg = self.config_data.get("farming", {})
         bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
-        actor_value = str(bot_cfg.get("actor_id", "") or "sin configurar")
-        profile_value = str(bot_cfg.get("combat_profile", "-") or "-")
-        mode_value = str(farming_cfg.get("mode", "-") or "-")
-        map_value = "-"
-        sniffer_value = "configurado" if bool(bot_cfg.get("sniffer_enabled", False)) else "inactivo"
+        actor_value = str(bot_cfg.get("actor_id", "") or "—")
+        profile_value = str(bot_cfg.get("combat_profile", "—") or "—")
+        mode_value = str(farming_cfg.get("mode", "—") or "—")
+        map_value = "—"
+        sniffer_active = False
         if bot is not None:
             actor_value = str(getattr(bot, "_sniffer_my_actor", None) or actor_value)
             profile_value = str(getattr(getattr(bot, "combat_profile", None), "name", profile_value) or profile_value)
             mode_value = str(bot.config.get("farming", {}).get("mode", mode_value) or mode_value)
             current_map = getattr(bot, "_current_map_id", None)
-            map_value = str(current_map) if current_map is not None else "-"
-            sniffer_value = "activo" if bot.sniffer_active else sniffer_value
+            map_value = str(current_map) if current_map is not None else "—"
+            sniffer_active = bool(bot.sniffer_active)
         self._main_runtime_actor_var.set(actor_value)
         self._main_runtime_profile_var.set(profile_value)
         self._main_runtime_mode_var.set(mode_value)
         self._main_runtime_map_var.set(map_value)
-        self._main_runtime_sniffer_var.set(sniffer_value)
-        # Actualizar info del header (· perfil · map_id)
+        self._main_runtime_sniffer_var.set("activo" if sniffer_active else "inactivo")
+
+        harvested = getattr(self, "_harvested_count", 0)
+        pods_label = getattr(self, "_pods_label", "")
+        meta_parts = [profile_value, f"map {map_value}", mode_value]
+        if sniffer_active:
+            meta_parts.append("sniffer")
+        if pods_label:
+            meta_parts.append(pods_label)
+        if harvested:
+            meta_parts.append(f"{harvested} cosechados")
+        info = "  ·  ".join(p for p in meta_parts if p and p != "—")
         if hasattr(self, "_header_info_lbl") and self._header_info_lbl:
-            info = f"·  {profile_value}  ·  map:{map_value}"
             self._header_info_lbl.config(text=info)
 
     def _refresh_resource_node_list(self):
@@ -1778,69 +2116,74 @@ class App(tk.Tk):
         self._nav_profile_var = tk.StringVar()
 
         hdr = tk.Frame(frame, bg=PANEL)
-        hdr.pack(fill="x", padx=10, pady=(8, 4))
-        tk.Label(hdr, text="Rutas guardadas", bg=PANEL, fg=GREEN,
-                 font=("Segoe UI", 11, "bold")).pack(side="left")
+        hdr.pack(fill="x", padx=SP_3, pady=(SP_2, SP_1))
+        tk.Label(hdr, text="Rutas guardadas", bg=PANEL, fg=TEXT_PRIMARY,
+                 font=FONT_TITLE).pack(side="left")
         tk.Checkbutton(hdr, text="Activar navegacion", variable=self._nav_enabled_var,
-                       bg=PANEL, activebackground=PANEL, fg=GREEN, selectcolor=PANEL,
-                       font=("Segoe UI", 9), command=self._save_navigation).pack(side="right")
+                       bg=PANEL, activebackground=PANEL, fg=TEXT_PRIMARY,
+                       selectcolor=BG_ELEVATED,
+                       font=FONT_BODY, command=self._save_navigation).pack(side="right")
 
         tk.Label(frame,
-                 text="Cada ruta tiene nombre propio y sus salidas por map_id. Luego puedes asignarla al leveling desde la pestaña de mobs.",
-                 bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8, "italic"),
-                 wraplength=520, justify="left").pack(fill="x", padx=10, pady=(0, 6))
+                 text="Cada ruta tiene sus salidas por map_id. Asignala al leveling en la pestaña Mobs.",
+                 bg=PANEL, fg=TEXT_TERTIARY, font=FONT_CAPTION,
+                 wraplength=520, justify="left").pack(fill="x", padx=SP_3, pady=(0, SP_2))
 
         cfg_row = tk.Frame(frame, bg=PANEL)
-        cfg_row.pack(fill="x", padx=10, pady=(2, 4))
-        tk.Label(cfg_row, text="Scans vacios antes de mover:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
+        cfg_row.pack(fill="x", padx=SP_3, pady=(SP_1, SP_1))
+        tk.Label(cfg_row, text="Scans vacíos antes de mover:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
         self._nav_scans_var = tk.StringVar(value=str(nav_cfg.get("empty_scans_before_move", 3)))
         spin = tk.Spinbox(cfg_row, from_=1, to=20, width=4, textvariable=self._nav_scans_var,
-                          bg=CARD, fg=TEXT, buttonbackground=PANEL, relief="flat",
+                          bg=BG_ELEVATED, fg=TEXT_PRIMARY, buttonbackground=BG_SUBTLE,
+                          relief="flat",
+                          highlightthickness=1, highlightbackground=BORDER_DEFAULT,
                           command=self._save_navigation)
-        spin.pack(side="left", padx=(6, 0))
+        spin.pack(side="left", padx=(SP_2, 0))
         spin.bind("<FocusOut>", lambda e: self._save_navigation())
 
         selector_row = tk.Frame(frame, bg=PANEL)
-        selector_row.pack(fill="x", padx=10, pady=(4, 6))
-        tk.Label(selector_row, text="Ruta activa en editor:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
+        selector_row.pack(fill="x", padx=SP_3, pady=(SP_1, SP_2))
+        tk.Label(selector_row, text="Ruta activa:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
         self._nav_profile_cb = ttk.Combobox(selector_row, textvariable=self._nav_profile_var,
-                                            state="readonly", width=24)
-        self._nav_profile_cb.pack(side="left", padx=(6, 4))
+                                            state="readonly", width=24, style="Pro.TCombobox")
+        self._nav_profile_cb.pack(side="left", padx=(SP_2, SP_1))
         self._nav_profile_cb.bind("<<ComboboxSelected>>", lambda e: self._on_nav_profile_changed())
-        tk.Button(selector_row, text="Nueva", bg=BLUE, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_new_profile).pack(side="left", padx=(0, 4))
-        tk.Button(selector_row, text="Renombrar", bg=YELLOW, fg=BG,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_rename_profile).pack(side="left", padx=(0, 4))
-        tk.Button(selector_row, text="Eliminar", bg=RED, fg=TEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_delete_profile).pack(side="left")
+        self._make_pill_button(selector_row, "Nueva", command=self._nav_new_profile,
+                               variant="primary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(selector_row, "Renombrar", command=self._nav_rename_profile,
+                               variant="secondary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(selector_row, "Eliminar", command=self._nav_delete_profile,
+                               variant="danger", size="sm").pack(side="left")
 
         map_route_row = tk.Frame(frame, bg=PANEL)
-        map_route_row.pack(fill="x", padx=10, pady=(6, 2))
-        tk.Label(map_route_row, text="Map ID actual:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
+        map_route_row.pack(fill="x", padx=SP_3, pady=(SP_2, SP_1))
+        tk.Label(map_route_row, text="Map ID:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
         self._nav_map_id_var = tk.StringVar(value="")
         tk.Entry(map_route_row, textvariable=self._nav_map_id_var, width=10,
-                 bg=CARD, fg=TEXT, relief="flat",
-                 insertbackground=BLUE).pack(side="left", padx=(6, 4))
-        tk.Button(map_route_row, text="Usar actual", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_use_current_map_id).pack(side="left")
+                 bg=BG_ELEVATED, fg=TEXT_PRIMARY, relief="flat",
+                 highlightthickness=1, highlightbackground=BORDER_DEFAULT, highlightcolor=BRAND,
+                 insertbackground=BRAND, font=FONT_MONO).pack(side="left", padx=(SP_2, SP_1))
+        self._make_pill_button(map_route_row, "Usar actual",
+                               command=self._nav_use_current_map_id,
+                               variant="success", size="sm").pack(side="left")
 
         map_list_row = tk.Frame(frame, bg=PANEL)
-        map_list_row.pack(fill="x", padx=10, pady=(4, 0))
-        tk.Label(map_list_row, text="Salidas por map_id:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(anchor="w")
+        map_list_row.pack(fill="x", padx=SP_3, pady=(SP_1, 0))
+        tk.Label(map_list_row, text="Salidas por map_id", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_LABEL).pack(anchor="w")
 
         map_lb_frame = tk.Frame(map_list_row, bg=PANEL)
-        map_lb_frame.pack(fill="x")
-        self._nav_map_route_listbox = tk.Listbox(map_lb_frame, height=6, bg=CARD, fg=TEXT,
-                                                 font=("Consolas", 9), relief="flat",
-                                                 selectbackground=GREEN, selectforeground=BG,
+        map_lb_frame.pack(fill="x", pady=(SP_1, 0))
+        self._nav_map_route_listbox = tk.Listbox(map_lb_frame, height=6, bg=BG_ELEVATED,
+                                                 fg=TEXT_PRIMARY,
+                                                 font=FONT_MONO, relief="flat",
+                                                 highlightthickness=1,
+                                                 highlightbackground=BORDER_SUBTLE,
+                                                 selectbackground=BRAND_SOFT,
+                                                 selectforeground=TEXT_PRIMARY,
                                                  activestyle="none")
         self._nav_map_route_listbox.pack(side="left", fill="x", expand=True)
         map_lb_scroll = ttk.Scrollbar(map_lb_frame, orient="vertical", command=self._nav_map_route_listbox.yview)
@@ -1848,71 +2191,48 @@ class App(tk.Tk):
         map_lb_scroll.pack(side="right", fill="y")
 
         map_btn_row = tk.Frame(frame, bg=PANEL)
-        map_btn_row.pack(fill="x", padx=10, pady=(2, 6))
-        tk.Button(map_btn_row, text="Guardar punto actual", bg=BLUE, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_add_map_point).pack(side="left", padx=(0, 4))
-        tk.Button(map_btn_row, text="Capturar mouse map_id (3s)", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_capture_mouse_for_map).pack(side="left", padx=(0, 4))
-        tk.Button(map_btn_row, text="Eliminar map_id", bg=RED, fg=TEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_remove_map_point).pack(side="left")
+        map_btn_row.pack(fill="x", padx=SP_3, pady=(SP_1, SP_2))
+        self._make_pill_button(map_btn_row, "Guardar punto",
+                               command=self._nav_add_map_point,
+                               variant="primary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(map_btn_row, "Capturar mouse (3s)",
+                               command=self._nav_capture_mouse_for_map,
+                               variant="ghost", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(map_btn_row, "Eliminar",
+                               command=self._nav_remove_map_point,
+                               variant="danger", size="sm").pack(side="left")
 
         exit_row = tk.Frame(frame, bg=PANEL)
-        exit_row.pack(fill="x", padx=10, pady=(2, 6))
-        tk.Label(exit_row, text="Salida automática por borde:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
+        exit_row.pack(fill="x", padx=SP_3, pady=(SP_1, SP_2))
+        tk.Label(exit_row, text="Salida por borde:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
         for label in ("Arriba", "Derecha", "Abajo", "Izquierda"):
-            tk.Button(
-                exit_row,
-                text=label,
-                bg=CARD,
-                fg=TEXT,
-                font=("Segoe UI", 8),
-                relief="flat",
-                padx=8,
-                pady=2,
-                cursor="hand2",
+            self._make_pill_button(
+                exit_row, label,
                 command=lambda d=label.lower(): self._nav_store_map_exit_direction(d),
-            ).pack(side="left", padx=(6, 0))
+                variant="secondary", size="sm",
+            ).pack(side="left", padx=(SP_1, 0))
 
-        tk.Button(
-            exit_row,
-            text="Celda específica",
-            bg=BLUE,
-            fg=BG,
-            font=("Segoe UI", 8, "bold"),
-            relief="flat",
-            padx=8,
-            pady=2,
-            cursor="hand2",
-            command=self._nav_store_map_exit_cell,
-        ).pack(side="left", padx=(12, 0))
-
-        tk.Button(
-            exit_row,
-            text="Capturar Celda (3s)",
-            bg=CARD,
-            fg=TEXT,
-            font=("Segoe UI", 8),
-            relief="flat",
-            padx=8,
-            pady=2,
-            cursor="hand2",
-            command=self._nav_capture_cell_for_map,
-        ).pack(side="left", padx=(6, 0))
+        self._make_pill_button(exit_row, "Celda específica",
+                               command=self._nav_store_map_exit_cell,
+                               variant="primary", size="sm").pack(side="left", padx=(SP_3, 0))
+        self._make_pill_button(exit_row, "Capturar celda (3s)",
+                               command=self._nav_capture_cell_for_map,
+                               variant="ghost", size="sm").pack(side="left", padx=(SP_1, 0))
 
         list_row = tk.Frame(frame, bg=PANEL)
-        list_row.pack(fill="x", padx=10, pady=(4, 0))
-        tk.Label(list_row, text="Ruta fallback (sin map_id):", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(anchor="w")
+        list_row.pack(fill="x", padx=SP_3, pady=(SP_1, 0))
+        tk.Label(list_row, text="Ruta fallback (sin map_id)", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_LABEL).pack(anchor="w")
 
         lb_frame = tk.Frame(list_row, bg=PANEL)
-        lb_frame.pack(fill="x")
-        self._route_listbox = tk.Listbox(lb_frame, height=4, bg=CARD, fg=TEXT,
-                                         font=("Consolas", 9), relief="flat",
-                                         selectbackground=GREEN, selectforeground=BG,
+        lb_frame.pack(fill="x", pady=(SP_1, 0))
+        self._route_listbox = tk.Listbox(lb_frame, height=4, bg=BG_ELEVATED, fg=TEXT_PRIMARY,
+                                         font=FONT_MONO, relief="flat",
+                                         highlightthickness=1,
+                                         highlightbackground=BORDER_SUBTLE,
+                                         selectbackground=BRAND_SOFT,
+                                         selectforeground=TEXT_PRIMARY,
                                          activestyle="none")
         self._route_listbox.pack(side="left", fill="x", expand=True)
         lb_scroll = ttk.Scrollbar(lb_frame, orient="vertical", command=self._route_listbox.yview)
@@ -1920,16 +2240,91 @@ class App(tk.Tk):
         lb_scroll.pack(side="right", fill="y")
 
         btn_row = tk.Frame(frame, bg=PANEL)
-        btn_row.pack(fill="x", padx=10, pady=(2, 6))
-        tk.Button(btn_row, text="+ Agregar punto", bg=BLUE, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_add_point).pack(side="left", padx=(0, 4))
-        tk.Button(btn_row, text="Capturar mouse (3s)", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_capture_mouse).pack(side="left", padx=(0, 4))
-        tk.Button(btn_row, text="Eliminar", bg=RED, fg=TEXT,
-                  font=("Segoe UI", 8), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._nav_remove_point).pack(side="left")
+        btn_row.pack(fill="x", padx=SP_3, pady=(SP_1, SP_2))
+        self._make_pill_button(btn_row, "+ Agregar punto",
+                               command=self._nav_add_point,
+                               variant="primary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(btn_row, "Capturar mouse (3s)",
+                               command=self._nav_capture_mouse,
+                               variant="ghost", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(btn_row, "Eliminar",
+                               command=self._nav_remove_point,
+                               variant="danger", size="sm").pack(side="left")
+
+        # ─────────────── Modo "route": secuencia map_id → exit_cell con pausa ───────────────
+        # Se activa con farming.mode = "route" + farming.route_profile = <perfil>.
+        # El bot recorre cada step (map_id, exit_cell, pause_s), espera pause_s
+        # en el mapa, escanea/ataca mobs durante ese tiempo y al cumplirse clickea
+        # exit_cell. loop=true → el ciclo se repite indefinidamente.
+        seq_section = tk.Frame(frame, bg=PANEL,
+                               highlightbackground=BORDER_DEFAULT,
+                               highlightthickness=1)
+        seq_section.pack(fill="x", padx=SP_3, pady=(SP_2, SP_2))
+
+        seq_hdr = tk.Frame(seq_section, bg=PANEL)
+        seq_hdr.pack(fill="x", padx=SP_2, pady=(SP_2, SP_1))
+        tk.Label(seq_hdr, text="Secuencia map→map (modo \"route\")", bg=PANEL,
+                 fg=TEXT_PRIMARY, font=FONT_TITLE).pack(side="left")
+        self._nav_route_loop_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(seq_hdr, text="loop infinito", variable=self._nav_route_loop_var,
+                       bg=PANEL, activebackground=PANEL, fg=TEXT_PRIMARY,
+                       selectcolor=BG_ELEVATED,
+                       font=FONT_CAPTION, command=self._save_navigation).pack(side="right")
+
+        tk.Label(seq_section,
+                 text=("Cada paso: map_id donde esperar, exit_cell donde clickear al "
+                       "expirar la pausa, y pause_s de espera. Si aparece enemigo, el bot lo "
+                       "ataca y reinicia el cronómetro al salir."),
+                 bg=PANEL, fg=TEXT_TERTIARY, font=FONT_CAPTION,
+                 wraplength=520, justify="left").pack(fill="x", padx=SP_2, pady=(0, SP_1))
+
+        seq_lb_frame = tk.Frame(seq_section, bg=PANEL)
+        seq_lb_frame.pack(fill="x", padx=SP_2, pady=(SP_1, SP_1))
+        self._nav_seq_listbox = tk.Listbox(seq_lb_frame, height=5, bg=BG_ELEVATED,
+                                           fg=TEXT_PRIMARY,
+                                           font=FONT_MONO, relief="flat",
+                                           highlightthickness=1,
+                                           highlightbackground=BORDER_SUBTLE,
+                                           selectbackground=BRAND_SOFT,
+                                           selectforeground=TEXT_PRIMARY,
+                                           activestyle="none")
+        self._nav_seq_listbox.pack(side="left", fill="x", expand=True)
+        seq_lb_scroll = ttk.Scrollbar(seq_lb_frame, orient="vertical",
+                                      command=self._nav_seq_listbox.yview)
+        self._nav_seq_listbox.configure(yscrollcommand=seq_lb_scroll.set)
+        seq_lb_scroll.pack(side="right", fill="y")
+
+        seq_btn_row = tk.Frame(seq_section, bg=PANEL)
+        seq_btn_row.pack(fill="x", padx=SP_2, pady=(SP_1, SP_2))
+        self._make_pill_button(seq_btn_row, "+ Agregar paso",
+                               command=self._nav_seq_add_step,
+                               variant="primary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(seq_btn_row, "Editar",
+                               command=self._nav_seq_edit_step,
+                               variant="secondary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(seq_btn_row, "↑",
+                               command=lambda: self._nav_seq_move(-1),
+                               variant="ghost", size="sm").pack(side="left", padx=(0, 2))
+        self._make_pill_button(seq_btn_row, "↓",
+                               command=lambda: self._nav_seq_move(+1),
+                               variant="ghost", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(seq_btn_row, "Eliminar",
+                               command=self._nav_seq_remove_step,
+                               variant="danger", size="sm").pack(side="left")
+
+        seq_mode_row = tk.Frame(seq_section, bg=PANEL)
+        seq_mode_row.pack(fill="x", padx=SP_2, pady=(SP_1, SP_2))
+        tk.Label(seq_mode_row, text="Modo \"route\" global:",
+                 bg=PANEL, fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(side="left")
+        self._nav_route_mode_btn = self._make_pill_button(
+            seq_mode_row, "Modo: ?",
+            command=self._nav_toggle_route_mode,
+            variant="secondary", size="sm",
+        )
+        self._nav_route_mode_btn.pack(side="left", padx=(SP_1, 0))
+        tk.Label(seq_mode_row,
+                 text="(perfil como ruta activa)",
+                 bg=PANEL, fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(side="left", padx=(SP_1, 0))
 
         self._refresh_navigation_profiles()
 
@@ -1980,6 +2375,53 @@ class App(tk.Tk):
                 self._nav_map_route_listbox.insert("end", f"{map_id} -> auto:{str(direction).strip().lower()}")
             except Exception:
                 pass
+        # Cargar secuencia (modo "route") + loop si existen.
+        # Refrescar el cache _nav_seq_data desde el perfil (fuente de verdad
+        # para serialización en _save_navigation).
+        self._nav_seq_data = [
+            dict(step) for step in (profile.get("sequence", []) or [])
+            if isinstance(step, dict)
+        ]
+        if hasattr(self, "_nav_seq_listbox"):
+            self._refresh_nav_seq_listbox()
+        if hasattr(self, "_nav_route_loop_var"):
+            self._nav_route_loop_var.set(bool(profile.get("loop", True)))
+        self._update_nav_route_mode_button()
+
+    def _update_nav_route_mode_button(self):
+        if not hasattr(self, "_nav_route_mode_btn"):
+            return
+        farming = self.config_data.get("farming", {})
+        active_profile = farming.get("route_profile")
+        mode = farming.get("mode", "resource")
+        selected = self._selected_nav_profile_name()
+        is_active = (mode == "route" and active_profile == selected)
+        if is_active:
+            self._nav_route_mode_btn.config(text="Modo: ON (route)")
+            self._set_pill_state(self._nav_route_mode_btn, enabled=True, variant="success")
+        else:
+            self._nav_route_mode_btn.config(text="Modo: OFF")
+            self._set_pill_state(self._nav_route_mode_btn, enabled=True, variant="danger")
+
+    def _nav_toggle_route_mode(self):
+        """Activa/desactiva farming.mode='route' usando el perfil seleccionado."""
+        farming = self.config_data.setdefault("farming", {})
+        selected = self._selected_nav_profile_name()
+        if not selected:
+            messagebox.showwarning("Sin perfil", "Selecciona primero una ruta.", parent=self)
+            return
+        current_mode = farming.get("mode", "resource")
+        current_profile = farming.get("route_profile")
+        if current_mode == "route" and current_profile == selected:
+            farming["mode"] = "resource"
+            self._log_nav(f"Modo route DESACTIVADO (perfil {selected!r})")
+        else:
+            farming["mode"] = "route"
+            farming["route_profile"] = selected
+            self._log_nav(f"Modo route ACTIVADO con perfil {selected!r}")
+        save_config(self.config_data)
+        self._sync_runtime_bot_config()
+        self._update_nav_route_mode_button()
 
     def _on_nav_profile_changed(self):
         self._load_navigation_profile_to_editor()
@@ -2244,10 +2686,21 @@ class App(tk.Tk):
         nav = self._navigation_cfg()
         profiles = self._route_profiles_cfg()
         selected = self._selected_nav_profile_name() or "Default"
+        # Preservar sequence/loop existentes si aún no se construyó la UI;
+        # leerlos desde el listbox cuando la UI ya está montada.
+        sequence_persisted = profiles.get(selected, {}).get("sequence", []) or []
+        loop_persisted = bool(profiles.get(selected, {}).get("loop", True))
+        if hasattr(self, "_nav_seq_listbox"):
+            sequence_persisted = self._serialize_nav_sequence_from_ui(selected)
+        if hasattr(self, "_nav_route_loop_var"):
+            loop_persisted = bool(self._nav_route_loop_var.get())
+
         profiles[selected] = {
             "route": route,
             "route_by_map_id": route_by_map_id,
             "route_exit_by_map_id": route_exit_by_map_id,
+            "sequence": sequence_persisted,
+            "loop": loop_persisted,
         }
         nav["enabled"] = self._nav_enabled_var.get()
         nav["empty_scans_before_move"] = scans
@@ -2259,6 +2712,319 @@ class App(tk.Tk):
         self._sync_runtime_bot_config()
         self._refresh_navigation_profiles()
 
+    # ─────────── Secuencia (modo "route") — helpers + handlers ───────────
+    def _serialize_nav_sequence_from_ui(self, profile_name: str) -> list[dict]:
+        """Lee el listbox de secuencia y devuelve la lista de steps.
+
+        Conserva los datos previos del perfil para entradas que no se hayan
+        modificado (en realidad reescribimos la lista entera desde memoria).
+        Esta función solo extrae el contenido CACHEADO en self._nav_seq_data.
+        """
+        cached = list(getattr(self, "_nav_seq_data", []))
+        return [dict(step) for step in cached if isinstance(step, dict)]
+
+    def _ensure_nav_seq_cache(self):
+        """Asegura que self._nav_seq_data refleje la secuencia del perfil activo.
+
+        El listbox solo muestra strings, así que mantenemos los dicts en memoria.
+        """
+        profile = self._current_nav_profile_cfg()
+        seq = profile.get("sequence", []) or []
+        self._nav_seq_data = [dict(step) for step in seq if isinstance(step, dict)]
+
+    def _refresh_nav_seq_listbox(self):
+        if not hasattr(self, "_nav_seq_listbox"):
+            return
+        self._nav_seq_listbox.delete(0, "end")
+        for idx, step in enumerate(getattr(self, "_nav_seq_data", []) or []):
+            map_id = step.get("map_id", "?")
+            exit_cell = step.get("exit_cell", "?")
+            pause_s = step.get("pause_s", 5.0)
+            try:
+                pause_str = f"{float(pause_s):.1f}s"
+            except (TypeError, ValueError):
+                pause_str = f"{pause_s}s"
+            self._nav_seq_listbox.insert(
+                "end",
+                f"{idx+1}. map={map_id}  exit_cell={exit_cell}  pause={pause_str}",
+            )
+
+    def _ask_step_dialog(self, initial: dict | None = None) -> dict | None:
+        """Diálogo Toplevel para capturar map_id / exit_cell / pause_s de un step.
+
+        - map_id: entrada manual + botón "Usar actual" (lee del runtime).
+        - exit_cell: entrada manual + botón "Capturar Celda (3s)" que proyecta
+          la posición del mouse contra las celdas del mapa actual del bot
+          (mismo mecanismo que _nav_capture_cell_for_map).
+        - pause_s: entrada manual (default 5.0).
+
+        Devuelve dict {map_id, exit_cell, pause_s} o None si el usuario canceló.
+        """
+        result = {"step": None}
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Paso de secuencia")
+        dlg.transient(self)
+        dlg.configure(bg=PANEL)
+        dlg.resizable(False, False)
+
+        current_map = self._current_runtime_map_id()
+        default_map = ""
+        if initial and initial.get("map_id") is not None:
+            default_map = str(initial.get("map_id"))
+        elif current_map is not None:
+            default_map = str(current_map)
+        default_exit = ""
+        if initial and initial.get("exit_cell") is not None:
+            default_exit = str(initial.get("exit_cell"))
+        default_pause = "5.0"
+        if initial and initial.get("pause_s") is not None:
+            default_pause = str(initial.get("pause_s"))
+
+        map_var = tk.StringVar(value=default_map)
+        cell_var = tk.StringVar(value=default_exit)
+        pause_var = tk.StringVar(value=default_pause)
+        status_var = tk.StringVar(value="")
+
+        body = tk.Frame(dlg, bg=PANEL, padx=12, pady=10)
+        body.pack(fill="both", expand=True)
+
+        # map_id ───────────────────────────────────────
+        tk.Label(body, text="map_id:", bg=PANEL, fg=TEXT,
+                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=4, pady=6)
+        tk.Entry(body, textvariable=map_var, width=14, bg=CARD, fg=TEXT,
+                 relief="flat", insertbackground=BLUE,
+                 font=("Consolas", 10)).grid(row=0, column=1, padx=4, pady=6, sticky="w")
+
+        def _use_current_map():
+            m = self._current_runtime_map_id()
+            if m is None:
+                messagebox.showinfo("Sin map_id",
+                                    "No hay map_id actual. Inicia el bot con sniffer y espera un GDM/GDK.",
+                                    parent=dlg)
+                return
+            map_var.set(str(m))
+
+        tk.Button(body, text="Usar actual", bg=GREEN, fg=BG,
+                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                  cursor="hand2", command=_use_current_map).grid(row=0, column=2, padx=4, pady=6, sticky="w")
+
+        # exit_cell ────────────────────────────────────
+        tk.Label(body, text="exit_cell:", bg=PANEL, fg=TEXT,
+                 font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=4, pady=6)
+        tk.Entry(body, textvariable=cell_var, width=14, bg=CARD, fg=TEXT,
+                 relief="flat", insertbackground=BLUE,
+                 font=("Consolas", 10)).grid(row=1, column=1, padx=4, pady=6, sticky="w")
+
+        def _capture_cell_via_mouse():
+            try:
+                target_map = int(str(map_var.get()).strip())
+            except (TypeError, ValueError):
+                messagebox.showwarning("map_id inválido",
+                                       "Define primero un map_id válido para proyectar la celda.",
+                                       parent=dlg)
+                return
+            bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+            if not bot:
+                messagebox.showwarning("Bot no activo",
+                                       "El bot debe estar corriendo (con sniffer) para proyectar celdas.",
+                                       parent=dlg)
+                return
+            if str(getattr(bot, "_current_map_id", None)) != str(target_map):
+                messagebox.showwarning(
+                    "Mapa no coincide",
+                    f"El bot debe estar en map_id={target_map} para proyectar la celda. "
+                    f"Actualmente está en map_id={getattr(bot, '_current_map_id', None)}.",
+                    parent=dlg,
+                )
+                return
+            status_var.set("Capturando en 3 segundos... mové el mouse a la celda destino")
+
+            import pyautogui
+
+            def _do():
+                time.sleep(3)
+                x, y = pyautogui.position()
+                try:
+                    cells = bot.get_current_map_cells_snapshot()
+                except Exception as exc:
+                    self.after(0, lambda: status_var.set(f"Error obteniendo celdas: {exc!r}"))
+                    return
+                best_cell = None
+                best_dist = float("inf")
+                for cell in cells:
+                    cid = cell.get("cell_id")
+                    if cid is None:
+                        continue
+                    pos = bot._cell_to_screen(int(cid))
+                    if not pos:
+                        continue
+                    dist = ((pos[0] - x) ** 2 + (pos[1] - y) ** 2) ** 0.5
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_cell = cid
+                if best_cell is not None and best_dist < 80:
+                    def _apply():
+                        cell_var.set(str(int(best_cell)))
+                        status_var.set(f"Celda {int(best_cell)} capturada (dist {best_dist:.1f}px)")
+                    self.after(0, _apply)
+                else:
+                    self.after(
+                        0,
+                        lambda: status_var.set(
+                            f"No se encontró celda cerca del mouse ({x}, {y})"
+                        ),
+                    )
+
+            threading.Thread(target=_do, daemon=True).start()
+
+        tk.Button(body, text="Capturar Celda (3s)", bg=BLUE, fg=BG,
+                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                  cursor="hand2", command=_capture_cell_via_mouse).grid(
+            row=1, column=2, padx=4, pady=6, sticky="w"
+        )
+
+        # pause_s ──────────────────────────────────────
+        tk.Label(body, text="pause_s:", bg=PANEL, fg=TEXT,
+                 font=("Segoe UI", 9)).grid(row=2, column=0, sticky="e", padx=4, pady=6)
+        tk.Entry(body, textvariable=pause_var, width=14, bg=CARD, fg=TEXT,
+                 relief="flat", insertbackground=BLUE,
+                 font=("Consolas", 10)).grid(row=2, column=1, padx=4, pady=6, sticky="w")
+        tk.Label(body, text="(segundos)", bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8, "italic")).grid(row=2, column=2, sticky="w", padx=4)
+
+        # Status / mensaje de captura ─────────────────
+        tk.Label(body, textvariable=status_var, bg=PANEL, fg=YELLOW,
+                 font=("Segoe UI", 8, "italic"), wraplength=380, justify="left",
+                 anchor="w").grid(row=3, column=0, columnspan=3, sticky="we", padx=4, pady=(2, 4))
+
+        # Botones OK / Cancel ─────────────────────────
+        def _on_ok():
+            try:
+                map_id_val = int(str(map_var.get()).strip())
+            except (TypeError, ValueError):
+                messagebox.showwarning("map_id inválido", "Debe ser un entero.", parent=dlg)
+                return
+            try:
+                exit_cell_val = int(str(cell_var.get()).strip())
+            except (TypeError, ValueError):
+                messagebox.showwarning(
+                    "exit_cell inválido",
+                    "Debe ser un entero (cell_id). Usa 'Capturar Celda (3s)' si no lo conoces.",
+                    parent=dlg,
+                )
+                return
+            try:
+                pause_val = float(str(pause_var.get()).strip())
+            except (TypeError, ValueError):
+                messagebox.showwarning("pause_s inválido", "Debe ser un número (ej. 5.0).", parent=dlg)
+                return
+            if pause_val < 0:
+                pause_val = 0.0
+            result["step"] = {
+                "map_id": map_id_val,
+                "exit_cell": exit_cell_val,
+                "pause_s": pause_val,
+            }
+            dlg.destroy()
+
+        def _on_cancel():
+            dlg.destroy()
+
+        btn_row = tk.Frame(body, bg=PANEL)
+        btn_row.grid(row=4, column=0, columnspan=3, pady=(8, 0), sticky="e")
+        tk.Button(btn_row, text="OK", command=_on_ok, bg=GREEN, fg=BG,
+                  font=("Segoe UI", 9, "bold"), relief="flat", padx=22, pady=4,
+                  cursor="hand2").pack(side="left", padx=4)
+        tk.Button(btn_row, text="Cancel", command=_on_cancel, bg=RED, fg=TEXT,
+                  font=("Segoe UI", 9), relief="flat", padx=18, pady=4,
+                  cursor="hand2").pack(side="left", padx=4)
+
+        # Centrar y bloquear
+        dlg.update_idletasks()
+        try:
+            self_x = self.winfo_rootx()
+            self_y = self.winfo_rooty()
+            self_w = self.winfo_width()
+            self_h = self.winfo_height()
+            dw = dlg.winfo_width()
+            dh = dlg.winfo_height()
+            cx = self_x + (self_w - dw) // 2
+            cy = self_y + (self_h - dh) // 2
+            dlg.geometry(f"+{max(0, cx)}+{max(0, cy)}")
+        except Exception:
+            pass
+
+        try:
+            dlg.grab_set()
+        except Exception:
+            pass
+        dlg.protocol("WM_DELETE_WINDOW", _on_cancel)
+        dlg.wait_window()
+
+        return result["step"]
+
+    def _nav_seq_add_step(self):
+        self._ensure_nav_seq_cache()
+        step = self._ask_step_dialog(None)
+        if step is None:
+            return
+        self._nav_seq_data.append(step)
+        self._refresh_nav_seq_listbox()
+        self._save_navigation()
+
+    def _nav_seq_edit_step(self):
+        if not hasattr(self, "_nav_seq_listbox"):
+            return
+        sel = self._nav_seq_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        self._ensure_nav_seq_cache()
+        if idx < 0 or idx >= len(self._nav_seq_data):
+            return
+        step = self._ask_step_dialog(self._nav_seq_data[idx])
+        if step is None:
+            return
+        self._nav_seq_data[idx] = step
+        self._refresh_nav_seq_listbox()
+        self._nav_seq_listbox.selection_set(idx)
+        self._save_navigation()
+
+    def _nav_seq_remove_step(self):
+        if not hasattr(self, "_nav_seq_listbox"):
+            return
+        sel = self._nav_seq_listbox.curselection()
+        if not sel:
+            return
+        self._ensure_nav_seq_cache()
+        idx = sel[0]
+        if idx < 0 or idx >= len(self._nav_seq_data):
+            return
+        del self._nav_seq_data[idx]
+        self._refresh_nav_seq_listbox()
+        self._save_navigation()
+
+    def _nav_seq_move(self, direction: int):
+        """direction = -1 (sube) o +1 (baja)."""
+        if not hasattr(self, "_nav_seq_listbox"):
+            return
+        sel = self._nav_seq_listbox.curselection()
+        if not sel:
+            return
+        self._ensure_nav_seq_cache()
+        idx = sel[0]
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(self._nav_seq_data):
+            return
+        self._nav_seq_data[idx], self._nav_seq_data[new_idx] = (
+            self._nav_seq_data[new_idx],
+            self._nav_seq_data[idx],
+        )
+        self._refresh_nav_seq_listbox()
+        self._nav_seq_listbox.selection_set(new_idx)
+        self._save_navigation()
+
     def _log_nav(self, msg: str):
         self.log_queue.put(("log", f"[NAV] {msg}"))
 
@@ -2268,41 +3034,53 @@ class App(tk.Tk):
         
         top = tk.Frame(self._profile_tab_frame, bg=BG)
         top.pack(fill="x", pady=(8, 6))
-        tk.Label(top, text="Perfiles de Teleport / Secuencias", bg=BG, fg=GREEN, font=("Segoe UI", 11, "bold")).pack(side="left")
-        
-        active_row = tk.Frame(self._profile_tab_frame, bg=PANEL, padx=10, pady=8)
-        active_row.pack(fill="x", pady=(0, 10))
-        tk.Label(active_row, text="Perfil activo:", bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 9)).pack(side="left")
-        
+        tk.Label(top, text="Perfiles de Teleport / Secuencias", bg=BG,
+                 fg=TEXT_PRIMARY, font=FONT_TITLE).pack(side="left")
+
+        active_row = tk.Frame(self._profile_tab_frame, bg=PANEL, padx=SP_3, pady=SP_2)
+        active_row.pack(fill="x", pady=(0, SP_3))
+        tk.Label(active_row, text="Perfil activo:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
+
         self._active_teleport_var = tk.StringVar(value=self.config_data.get("active_teleport_profile", ""))
-        self._active_teleport_cb = ttk.Combobox(active_row, textvariable=self._active_teleport_var, state="readonly", width=24)
-        self._active_teleport_cb.pack(side="left", padx=(8, 4))
+        self._active_teleport_cb = ttk.Combobox(active_row, textvariable=self._active_teleport_var,
+                                                state="readonly", width=24, style="Pro.TCombobox")
+        self._active_teleport_cb.pack(side="left", padx=(SP_2, SP_1))
         self._active_teleport_cb.bind("<<ComboboxSelected>>", lambda e: self._save_active_teleport())
-        
-        self._active_teleport_toggle_btn = tk.Button(active_row, font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2, cursor="hand2", command=self._toggle_teleport_enabled)
+
+        self._active_teleport_toggle_btn = self._make_pill_button(
+            active_row, "",
+            command=self._toggle_teleport_enabled,
+            variant="secondary", size="sm",
+        )
         self._active_teleport_toggle_btn.pack(side="left")
-        
+
         if "teleport_enabled" not in self.config_data:
             self.config_data["teleport_enabled"] = bool(self.config_data.get("active_teleport_profile"))
         self._update_teleport_toggle_btn()
 
-        editor_frame = tk.Frame(self._profile_tab_frame, bg=PANEL, padx=10, pady=8)
+        editor_frame = tk.Frame(self._profile_tab_frame, bg=PANEL, padx=SP_3, pady=SP_2)
         editor_frame.pack(fill="x")
-        tk.Label(editor_frame, text="Editor de Perfiles", bg=PANEL, fg=YELLOW, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
-        
+        tk.Label(editor_frame, text="Editor de perfiles", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_LABEL).pack(anchor="w", pady=(0, SP_2))
+
         sel_row = tk.Frame(editor_frame, bg=PANEL)
-        sel_row.pack(fill="x", pady=(0, 6))
-        tk.Label(sel_row, text="Editar:", bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 9)).pack(side="left")
+        sel_row.pack(fill="x", pady=(0, SP_2))
+        tk.Label(sel_row, text="Editar:", bg=PANEL, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
         self._edit_teleport_var = tk.StringVar()
-        self._edit_teleport_cb = ttk.Combobox(sel_row, textvariable=self._edit_teleport_var, state="readonly", width=24)
-        self._edit_teleport_cb.pack(side="left", padx=(8, 4))
+        self._edit_teleport_cb = ttk.Combobox(sel_row, textvariable=self._edit_teleport_var,
+                                              state="readonly", width=24, style="Pro.TCombobox")
+        self._edit_teleport_cb.pack(side="left", padx=(SP_2, SP_1))
         self._edit_teleport_cb.bind("<<ComboboxSelected>>", lambda e: self._load_teleport_profile_to_editor())
-        
-        tk.Button(sel_row, text="Nuevo", bg=BLUE, fg=BG, font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2, cursor="hand2", command=self._new_teleport_profile).pack(side="left", padx=(0, 4))
-        tk.Button(sel_row, text="Eliminar", bg=RED, fg=TEXT, font=("Segoe UI", 8), relief="flat", padx=8, pady=2, cursor="hand2", command=self._delete_teleport_profile).pack(side="left")
-        
+
+        self._make_pill_button(sel_row, "Nuevo", command=self._new_teleport_profile,
+                               variant="primary", size="sm").pack(side="left", padx=(0, SP_1))
+        self._make_pill_button(sel_row, "Eliminar", command=self._delete_teleport_profile,
+                               variant="danger", size="sm").pack(side="left")
+
         form = tk.Frame(editor_frame, bg=PANEL)
-        form.pack(fill="x", pady=6)
+        form.pack(fill="x", pady=SP_2)
         
         self._tp_trigger_map_var = tk.StringVar()
         self._tp_cell_id_var = tk.StringVar()
@@ -2325,16 +3103,25 @@ class App(tk.Tk):
         for label_text, str_var, hint in fields:
             row = tk.Frame(form, bg=PANEL)
             row.pack(fill="x", pady=2)
-            tk.Label(row, text=label_text, bg=PANEL, fg=TEXT, font=("Segoe UI", 9), width=24, anchor="w").pack(side="left")
+            tk.Label(row, text=label_text, bg=PANEL, fg=TEXT_PRIMARY, font=FONT_BODY,
+                     width=24, anchor="w").pack(side="left")
             if label_text.startswith("Ruta a cargar"):
-                cb = ttk.Combobox(row, textvariable=str_var, state="readonly", width=22)
-                cb.pack(side="left", padx=(0, 6))
+                cb = ttk.Combobox(row, textvariable=str_var, state="readonly", width=22,
+                                  style="Pro.TCombobox")
+                cb.pack(side="left", padx=(0, SP_2))
                 self._tp_route_cb = cb
             else:
-                tk.Entry(row, textvariable=str_var, bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat", font=("Segoe UI", 9), width=24).pack(side="left", padx=(0, 6))
-            tk.Label(row, text=hint, bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8, "italic")).pack(side="left")
-            
-        tk.Button(editor_frame, text="Guardar Perfil", bg=GREEN, fg=BG, font=("Segoe UI", 9, "bold"), relief="flat", padx=12, pady=4, cursor="hand2", command=self._save_teleport_profile_from_editor).pack(pady=(6, 0))
+                tk.Entry(row, textvariable=str_var, bg=BG_ELEVATED, fg=TEXT_PRIMARY,
+                         insertbackground=BRAND, relief="flat",
+                         highlightthickness=1, highlightbackground=BORDER_DEFAULT,
+                         highlightcolor=BRAND,
+                         font=FONT_BODY, width=24).pack(side="left", padx=(0, SP_2))
+            tk.Label(row, text=hint, bg=PANEL, fg=TEXT_TERTIARY,
+                     font=FONT_CAPTION).pack(side="left")
+
+        self._make_pill_button(editor_frame, "Guardar perfil",
+                               command=self._save_teleport_profile_from_editor,
+                               variant="success", size="md").pack(pady=(SP_2, 0))
         
         self._refresh_teleport_profiles()
 
@@ -2370,9 +3157,11 @@ class App(tk.Tk):
         
     def _update_teleport_toggle_btn(self):
         if self.config_data.get("teleport_enabled", False):
-            self._active_teleport_toggle_btn.config(text="Activado", bg=GREEN, fg=BG)
+            self._active_teleport_toggle_btn.config(text="Activado")
+            self._set_pill_state(self._active_teleport_toggle_btn, enabled=True, variant="success")
         else:
-            self._active_teleport_toggle_btn.config(text="Desactivado", bg=RED, fg=TEXT)
+            self._active_teleport_toggle_btn.config(text="Desactivado")
+            self._set_pill_state(self._active_teleport_toggle_btn, enabled=True, variant="danger")
 
     def _toggle_teleport_enabled(self):
         current = self.config_data.get("teleport_enabled", False)
@@ -2469,81 +3258,86 @@ class App(tk.Tk):
 
         # ── Selector de modo ─────────────────────────────────────────────
         mode_row = tk.Frame(self.mobs_frame, bg=BG)
-        mode_row.pack(fill="x", padx=10, pady=(8, 4))
+        mode_row.pack(fill="x", padx=SP_3, pady=(SP_2, SP_1))
         current_mode = self.config_data["farming"].get("mode", "resource")
         is_leveling  = current_mode == "leveling"
-        mode_color   = GREEN if is_leveling else SUBTEXT
+        mode_color   = SUCCESS if is_leveling else TEXT_TERTIARY
         mode_text    = "Modo: Leveling ✓" if is_leveling else "Modo: Recursos (inactivo)"
         self._mob_mode_lbl = tk.Label(mode_row, text=mode_text,
                                       bg=BG, fg=mode_color,
-                                      font=("Segoe UI", 10, "bold"))
+                                      font=FONT_BODY_BOLD)
         self._mob_mode_lbl.pack(side="left")
-        tk.Button(mode_row, text="Desactivar todos", bg=RED, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._disable_all_mobs).pack(side="right", padx=(6, 0))
+        self._make_pill_button(mode_row, "Desactivar todos",
+                               command=self._disable_all_mobs,
+                               variant="danger", size="sm").pack(side="right", padx=(SP_1, 0))
         btn_text = "Desactivar leveling" if is_leveling else "Activar leveling"
-        btn_color = RED if is_leveling else GREEN
-        tk.Button(mode_row, text=btn_text, bg=btn_color, fg=BG,
-                  font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=3,
-                  cursor="hand2",
-                  command=self._toggle_leveling_mode).pack(side="right")
+        btn_variant = "danger" if is_leveling else "primary"
+        self._make_pill_button(mode_row, btn_text,
+                               command=self._toggle_leveling_mode,
+                               variant=btn_variant, size="sm").pack(side="right")
 
         route_row = tk.Frame(self.mobs_frame, bg=BG)
-        route_row.pack(fill="x", padx=10, pady=(2, 4))
-        tk.Label(route_row, text="Ruta asignada al leveling:", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
+        route_row.pack(fill="x", padx=SP_3, pady=(SP_1, SP_1))
+        tk.Label(route_row, text="Ruta leveling:", bg=BG, fg=TEXT_SECONDARY,
+                 font=FONT_CAPTION).pack(side="left")
         leveling_cfg = self.config_data.setdefault("leveling", {})
         route_names = sorted(self._route_profiles_cfg().keys())
         default_route = leveling_cfg.get("route_profile") or (route_names[0] if route_names else "")
         self._leveling_route_var = tk.StringVar(value=default_route)
         self._leveling_route_cb = ttk.Combobox(route_row, textvariable=self._leveling_route_var,
-                                               state="readonly", width=22, values=route_names)
-        self._leveling_route_cb.pack(side="left", padx=(6, 4))
+                                               state="readonly", width=22, values=route_names,
+                                               style="Pro.TCombobox")
+        self._leveling_route_cb.pack(side="left", padx=(SP_2, SP_1))
         self._leveling_route_cb.bind("<<ComboboxSelected>>", lambda e: self._save_leveling_route_profile())
-        tk.Button(route_row, text="Guardar", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._save_leveling_route_profile).pack(side="left")
-        self._leveling_route_toggle_btn = tk.Button(
-            route_row,
-            font=("Segoe UI", 7, "bold"),
-            relief="flat",
-            padx=8,
-            pady=1,
-            cursor="hand2",
+        self._make_pill_button(route_row, "Guardar",
+                               command=self._save_leveling_route_profile,
+                               variant="ghost", size="sm").pack(side="left")
+        self._leveling_route_toggle_btn = self._make_pill_button(
+            route_row, "",
             command=self._toggle_leveling_route_enabled,
+            variant="secondary", size="sm",
         )
-        self._leveling_route_toggle_btn.pack(side="left", padx=(6, 0))
+        self._leveling_route_toggle_btn.pack(side="left", padx=(SP_2, 0))
         self._update_leveling_route_toggle_button()
 
-        settings_box = tk.Frame(self.mobs_frame, bg=PANEL, padx=10, pady=8)
-        settings_box.pack(fill="x", padx=10, pady=(0, 8))
+        settings_box = tk.Frame(self.mobs_frame, bg=PANEL, padx=SP_3, pady=SP_2)
+        settings_box.pack(fill="x", padx=SP_3, pady=(0, SP_2))
         settings_header = tk.Frame(settings_box, bg=PANEL)
         settings_header.pack(fill="x")
-        tk.Label(settings_header, text="Ajustes de auto-nivel", bg=PANEL, fg=YELLOW,
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Label(settings_header, text="Ajustes de auto-nivel", bg=PANEL,
+                 fg=TEXT_SECONDARY, font=FONT_LABEL).pack(side="left")
         search_entry = tk.Entry(settings_header, textvariable=self._mob_search_var, width=22,
-                                bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
-                                font=("Segoe UI", 8))
-        search_entry.pack(side="right", padx=(0, 4))
+                                bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=BRAND,
+                                relief="flat", highlightthickness=1,
+                                highlightbackground=BORDER_DEFAULT, highlightcolor=BRAND,
+                                font=FONT_CAPTION)
+        search_entry.pack(side="right", padx=(0, SP_1))
         self._mob_search_entry = search_entry
-        tk.Button(settings_header, text="Limpiar", bg=BG, fg=TEXT,
-                  font=("Segoe UI", 7), relief="flat", padx=8, pady=1,
-                  cursor="hand2", command=self._clear_mob_search).pack(side="right", padx=(0, 4))
-        tk.Label(settings_header, text="Buscar:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="right", padx=(0, 6))
+        self._make_pill_button(settings_header, "Limpiar",
+                               command=self._clear_mob_search,
+                               variant="ghost", size="sm").pack(side="right", padx=(0, SP_1))
+        tk.Label(settings_header, text="Buscar:", bg=PANEL, fg=TEXT_TERTIARY,
+                 font=FONT_CAPTION).pack(side="right", padx=(0, SP_2))
 
         veto_row = tk.Frame(settings_box, bg=PANEL)
-        veto_row.pack(fill="x", pady=(6, 0))
-        tk.Label(veto_row, text="Vetar IDs (ignorar grupo si contiene):", bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
-        
+        veto_row.pack(fill="x", pady=(SP_2, 0))
+        tk.Label(veto_row, text="Vetar IDs (ignorar grupo si contiene):", bg=PANEL,
+                 fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(side="left")
+
         veto_raw = leveling_cfg.get("mob_group_veto_template_ids", [])
         if isinstance(veto_raw, list):
             veto_str = ",".join(str(v) for v in veto_raw)
         else:
             veto_str = str(veto_raw)
         self._mob_veto_template_ids_var = tk.StringVar(value=veto_str)
-        tk.Entry(veto_row, textvariable=self._mob_veto_template_ids_var, width=18, bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(6, 4))
-        tk.Button(veto_row, text="Guardar veto", bg=CARD, fg=TEXT, font=("Segoe UI", 7), relief="flat", padx=6, pady=1, cursor="hand2", command=self._save_mob_group_veto_template_ids).pack(side="left")
+        tk.Entry(veto_row, textvariable=self._mob_veto_template_ids_var, width=18,
+                 bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=BRAND, relief="flat",
+                 highlightthickness=1, highlightbackground=BORDER_DEFAULT,
+                 highlightcolor=BRAND,
+                 font=FONT_MONO_SMALL).pack(side="left", padx=(SP_2, SP_1))
+        self._make_pill_button(veto_row, "Guardar veto",
+                               command=self._save_mob_group_veto_template_ids,
+                               variant="ghost", size="sm").pack(side="left")
 
 
         mobs = _list_mobs()
@@ -2554,16 +3348,17 @@ class App(tk.Tk):
 
         if not mobs:
             tk.Label(self.mobs_frame, text="Sin mobs — agrega uno para comenzar",
-                     bg=BG, fg=SUBTEXT, font=("Segoe UI", 9)).pack(padx=10, pady=8)
+                     bg=BG, fg=TEXT_TERTIARY, font=FONT_BODY).pack(padx=SP_3, pady=SP_2)
         else:
             for mob_name in mobs:
                 mob_dir = os.path.join(MOBS_DIR, mob_name)
                 mob_data = active_cfg.get(mob_name, {})
                 self._mob_card_collapsed.setdefault(mob_name, True)
-                lf = tk.Frame(self.mobs_frame, bg=PANEL, bd=1, relief="groove")
-                lf.pack(fill="x", padx=10, pady=(4, 2))
+                lf = tk.Frame(self.mobs_frame, bg=PANEL,
+                              highlightthickness=1, highlightbackground=BORDER_SUBTLE)
+                lf.pack(fill="x", padx=SP_3, pady=(SP_1, 2))
 
-                header = tk.Frame(lf, bg=PANEL, padx=8, pady=4)
+                header = tk.Frame(lf, bg=PANEL, padx=SP_2, pady=SP_1)
                 header.pack(fill="x")
 
                 icon_photo = self._load_mob_icon_photo(mob_name)
@@ -2573,35 +3368,31 @@ class App(tk.Tk):
                 if icon_photo is not None:
                     tk.Label(icon_box, image=icon_photo, bg=PANEL).pack(fill="both", expand=True)
                 else:
-                    tk.Label(icon_box, text="ICONO", bg=BG, fg=SUBTEXT,
-                             font=("Segoe UI", 7, "bold")).pack(fill="both", expand=True)
+                    tk.Label(icon_box, text="ICONO", bg=BG_BASE, fg=TEXT_TERTIARY,
+                             font=FONT_CAPTION).pack(fill="both", expand=True)
 
                 summary = tk.Frame(header, bg=PANEL)
-                summary.pack(side="left", fill="x", expand=True, padx=(8, 0))
+                summary.pack(side="left", fill="x", expand=True, padx=(SP_2, 0))
                 template_text = ",".join(str(v) for v in mob_data.get("template_ids", []))
                 summary_text = (
                     f"Ignorar={'SI' if mob_data.get('ignore', False) else 'NO'}"
-                    f" | IDs={template_text or '-'}"
+                    f" · IDs={template_text or '—'}"
                 )
-                tk.Label(summary, text=mob_name, bg=PANEL, fg=YELLOW,
-                         font=("Segoe UI", 9, "bold")).pack(anchor="w")
-                tk.Label(summary, text=summary_text, bg=PANEL, fg=SUBTEXT,
-                         font=("Segoe UI", 8)).pack(anchor="w", pady=(1, 0))
+                tk.Label(summary, text=mob_name, bg=PANEL, fg=TEXT_PRIMARY,
+                         font=FONT_BODY_BOLD).pack(anchor="w")
+                tk.Label(summary, text=summary_text, bg=PANEL, fg=TEXT_TERTIARY,
+                         font=FONT_CAPTION).pack(anchor="w", pady=(1, 0))
 
-                toggle_btn = tk.Button(
+                toggle_btn = tk.Label(
                     header,
                     text="▼" if not self._mob_card_collapsed.get(mob_name, True) else "▶",
-                    bg=PANEL,
-                    fg=TEXT,
-                    relief="flat",
-                    padx=6,
-                    pady=1,
+                    bg=PANEL, fg=TEXT_TERTIARY,
+                    font=(FONT_FAMILY, 9),
                     cursor="hand2",
-                    font=("Segoe UI", 9, "bold"),
-                    command=lambda n=mob_name: self._toggle_mob_card(n),
                 )
-                toggle_btn.pack(side="right")
-                
+                toggle_btn.pack(side="right", padx=(0, SP_2))
+                toggle_btn.bind("<Button-1>", lambda _e, n=mob_name: self._toggle_mob_card(n))
+
                 var = tk.BooleanVar(value=mob_data.get("enabled", True))
                 self.mob_vars[mob_name] = var
                 tk.Checkbutton(
@@ -2610,16 +3401,16 @@ class App(tk.Tk):
                     variable=var,
                     bg=PANEL,
                     activebackground=PANEL,
-                    fg=GREEN,
-                    selectcolor=PANEL,
-                    font=("Segoe UI", 8, "bold"),
+                    fg=TEXT_PRIMARY,
+                    selectcolor=BG_ELEVATED,
+                    font=FONT_CAPTION,
                     command=self._update_mobs
-                ).pack(side="right", padx=(0, 8))
+                ).pack(side="right")
 
                 for widget in (header, summary, icon_box):
                     widget.bind("<Button-1>", lambda _e, n=mob_name: self._toggle_mob_card(n))
 
-                detail = tk.Frame(lf, bg=PANEL, padx=8, pady=4)
+                detail = tk.Frame(lf, bg=PANEL, padx=SP_2, pady=SP_1)
                 if not self._mob_card_collapsed.get(mob_name, True):
                     detail.pack(fill="x")
 
@@ -2629,52 +3420,53 @@ class App(tk.Tk):
                 row1 = tk.Frame(detail, bg=PANEL)
                 row1.pack(fill="x", pady=(0, 3))
                 tk.Checkbutton(row1, text="Ignorar", variable=ignore_var, bg=PANEL,
-                               activebackground=PANEL, fg=RED, selectcolor=PANEL,
-                               font=("Segoe UI", 8), command=self._update_mobs).pack(side="left")
-                lbl_result = tk.Label(row1, text="—", bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 8, "bold"))
+                               activebackground=PANEL, fg=TEXT_PRIMARY,
+                               selectcolor=BG_ELEVATED,
+                               font=FONT_CAPTION, command=self._update_mobs).pack(side="left")
+                lbl_result = tk.Label(row1, text="—", bg=PANEL, fg=TEXT_TERTIARY,
+                                      font=FONT_CAPTION)
                 lbl_result.pack(side="right")
-                tk.Button(row1, text="Chequear", bg=YELLOW, fg=BG,
-                          font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
-                          cursor="hand2",
-                          command=lambda n=mob_name, lbl=lbl_result: self._check_mob(n, lbl)).pack(side="right", padx=(4, 0))
-                tk.Button(row1, text="Escanear", bg="#f07010", fg=BG,
-                          font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
-                          cursor="hand2",
-                          command=lambda n=mob_name, lbl=lbl_result: self._scan_mob_on_map(n, lbl)).pack(side="right", padx=(4, 0))
+                self._make_pill_button(row1, "Chequear",
+                                       command=lambda n=mob_name, lbl=lbl_result: self._check_mob(n, lbl),
+                                       variant="secondary", size="sm"
+                                       ).pack(side="right", padx=(SP_1, 0))
+                self._make_pill_button(row1, "Escanear",
+                                       command=lambda n=mob_name, lbl=lbl_result: self._scan_mob_on_map(n, lbl),
+                                       variant="ghost", size="sm"
+                                       ).pack(side="right", padx=(SP_1, 0))
 
                 row2 = tk.Frame(detail, bg=PANEL)
                 row2.pack(fill="x", pady=(0, 3))
-                tk.Label(row2, text="Template IDs:", bg=PANEL, fg=SUBTEXT,
-                         font=("Segoe UI", 8)).pack(side="left")
+                tk.Label(row2, text="Template IDs:", bg=PANEL, fg=TEXT_TERTIARY,
+                         font=FONT_CAPTION).pack(side="left")
                 template_var = tk.StringVar(value=template_text)
                 self.mob_template_vars[mob_name] = template_var
                 tk.Entry(row2, textvariable=template_var, width=18,
-                         bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
-                         font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
-                tk.Button(row2, text="Guardar IDs", bg=CARD, fg=TEXT,
-                          font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
-                          cursor="hand2",
-                          command=lambda n=mob_name: self._save_mob_template_ids(n)).pack(side="left")
-                tk.Label(row2, text="Ej: 112,115", bg=PANEL, fg=SUBTEXT,
-                         font=("Segoe UI", 7, "italic")).pack(side="left", padx=(6, 0))
+                         bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=BRAND, relief="flat",
+                         highlightthickness=1, highlightbackground=BORDER_DEFAULT,
+                         highlightcolor=BRAND,
+                         font=FONT_MONO_SMALL).pack(side="left", padx=(SP_1, SP_1), fill="x", expand=True)
+                self._make_pill_button(row2, "Guardar IDs",
+                                       command=lambda n=mob_name: self._save_mob_template_ids(n),
+                                       variant="ghost", size="sm").pack(side="left")
+                tk.Label(row2, text="ej. 112,115", bg=PANEL, fg=TEXT_TERTIARY,
+                         font=FONT_CAPTION).pack(side="left", padx=(SP_1, 0))
 
                 row3 = tk.Frame(detail, bg=PANEL)
                 row3.pack(fill="x")
-                tk.Button(row3, text="Capturar ICONO", bg=BLUE, fg=BG,
-                          font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
-                          cursor="hand2",
-                          command=lambda n=mob_name: self._open_capture_mob_icon(n)).pack(side="left")
-                tk.Button(row3, text="Eliminar mob", bg=RED, fg=BG,
-                          font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
-                          cursor="hand2",
-                          command=lambda n=mob_name: self._delete_mob(n)).pack(side="right")
+                self._make_pill_button(row3, "Capturar ícono",
+                                       command=lambda n=mob_name: self._open_capture_mob_icon(n),
+                                       variant="secondary", size="sm").pack(side="left")
+                self._make_pill_button(row3, "Eliminar mob",
+                                       command=lambda n=mob_name: self._delete_mob(n),
+                                       variant="danger", size="sm").pack(side="right")
 
         # ── Botón nuevo mob ───────────────────────────────────────────────
         new_row = tk.Frame(self.mobs_frame, bg=BG)
-        new_row.pack(fill="x", padx=10, pady=(4, 6))
-        tk.Button(new_row, text="+ Nuevo mob", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=3,
-                  cursor="hand2", command=self._new_mob).pack(side="left")
+        new_row.pack(fill="x", padx=SP_3, pady=(SP_1, SP_2))
+        self._make_pill_button(new_row, "+ Nuevo mob",
+                               command=self._new_mob,
+                               variant="primary", size="sm").pack(side="left")
 
     def _refresh_database_tab(self):
         if self._database_frame is None:
@@ -2683,50 +3475,52 @@ class App(tk.Tk):
             w.destroy()
 
         top = tk.Frame(self._database_frame, bg=BG)
-        top.pack(fill="x", padx=10, pady=(8, 6))
-        tk.Label(top, text="Base de datos", bg=BG, fg=TEXT,
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        top.pack(fill="x", padx=SP_3, pady=(SP_2, SP_1))
+        tk.Label(top, text="Base de datos", bg=BG, fg=TEXT_PRIMARY,
+                 font=FONT_TITLE).pack(anchor="w")
         tk.Label(
             top,
-            text="Gestiona aquí las bases manuales de Template ID -> Mob y Actor ID -> Player.",
+            text="Template ID → Mob  ·  Actor ID → Player (registros manuales).",
             bg=BG,
-            fg=SUBTEXT,
-            font=("Segoe UI", 8),
+            fg=TEXT_TERTIARY,
+            font=FONT_CAPTION,
             justify="left",
         ).pack(anchor="w", pady=(2, 0))
 
-        mobs_box = tk.Frame(self._database_frame, bg=PANEL, padx=10, pady=8)
-        mobs_box.pack(fill="x", padx=10, pady=(0, 8))
+        mobs_box = tk.Frame(self._database_frame, bg=PANEL, padx=SP_3, pady=SP_2)
+        mobs_box.pack(fill="x", padx=SP_3, pady=(0, SP_2))
         mobs_header = tk.Frame(mobs_box, bg=PANEL)
         mobs_header.pack(fill="x")
-        tk.Label(mobs_header, text="DB mobs por Template ID", bg=PANEL, fg=YELLOW,
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        tk.Button(mobs_header, text="Buscar nombre", bg=BLUE, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
-                  cursor="hand2", command=self._prompt_mob_db_name_search).pack(side="right")
-        tk.Button(mobs_header, text="Limpiar", bg=BG, fg=TEXT,
-                  font=("Segoe UI", 7), relief="flat", padx=8, pady=1,
-                  cursor="hand2", command=self._reset_mob_db_filters).pack(side="right", padx=(0, 4))
+        tk.Label(mobs_header, text="Mobs por Template ID", bg=PANEL,
+                 fg=TEXT_SECONDARY, font=FONT_LABEL).pack(side="left")
+        self._make_pill_button(mobs_header, "Buscar nombre",
+                               command=self._prompt_mob_db_name_search,
+                               variant="secondary", size="sm").pack(side="right")
+        self._make_pill_button(mobs_header, "Limpiar",
+                               command=self._reset_mob_db_filters,
+                               variant="ghost", size="sm").pack(side="right", padx=(0, SP_1))
         mobs_form = tk.Frame(mobs_box, bg=PANEL)
-        mobs_form.pack(fill="x", pady=(6, 6))
+        mobs_form.pack(fill="x", pady=(SP_2, SP_1))
         self._template_db_id_var = tk.StringVar()
         self._template_db_name_var = tk.StringVar()
-        tk.Label(mobs_form, text="Template ID:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
+        tk.Label(mobs_form, text="Template ID:", bg=PANEL, fg=TEXT_TERTIARY,
+                 font=FONT_CAPTION).pack(side="left")
         tk.Entry(mobs_form, textvariable=self._template_db_id_var, width=10,
-                 bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
-                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
-        tk.Label(mobs_form, text="Nombre:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left", padx=(4, 0))
+                 bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=BRAND, relief="flat",
+                 highlightthickness=1, highlightbackground=BORDER_DEFAULT, highlightcolor=BRAND,
+                 font=FONT_MONO_SMALL).pack(side="left", padx=(SP_1, SP_1))
+        tk.Label(mobs_form, text="Nombre:", bg=PANEL, fg=TEXT_TERTIARY,
+                 font=FONT_CAPTION).pack(side="left", padx=(SP_1, 0))
         tk.Entry(mobs_form, textvariable=self._template_db_name_var, width=22,
-                 bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
-                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
-        tk.Button(mobs_form, text="Guardar en base", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._save_template_db_entry).pack(side="left")
-        tk.Button(mobs_form, text="Refrescar", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._refresh_database_tab).pack(side="left", padx=(4, 0))
+                 bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=BRAND, relief="flat",
+                 highlightthickness=1, highlightbackground=BORDER_DEFAULT, highlightcolor=BRAND,
+                 font=FONT_CAPTION).pack(side="left", padx=(SP_1, SP_1), fill="x", expand=True)
+        self._make_pill_button(mobs_form, "Guardar",
+                               command=self._save_template_db_entry,
+                               variant="success", size="sm").pack(side="left")
+        self._make_pill_button(mobs_form, "Refrescar",
+                               command=self._refresh_database_tab,
+                               variant="ghost", size="sm").pack(side="left", padx=(SP_1, 0))
         mobs_text_frame = tk.Frame(mobs_box, bg=PANEL)
         mobs_text_frame.pack(fill="both", expand=True)
         mobs_tree = ttk.Treeview(mobs_text_frame, columns=("id", "name"), show="headings", height=8)
@@ -2748,38 +3542,40 @@ class App(tk.Tk):
         else:
             mobs_tree.insert("", "end", values=("-", "Sin registros manuales aún."))
 
-        players_box = tk.Frame(self._database_frame, bg=PANEL, padx=10, pady=8)
-        players_box.pack(fill="x", padx=10, pady=(0, 8))
+        players_box = tk.Frame(self._database_frame, bg=PANEL, padx=SP_3, pady=SP_2)
+        players_box.pack(fill="x", padx=SP_3, pady=(0, SP_2))
         players_header = tk.Frame(players_box, bg=PANEL)
         players_header.pack(fill="x")
-        tk.Label(players_header, text="DB players por Actor ID", bg=PANEL, fg=GREEN,
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        tk.Button(players_header, text="Buscar nombre", bg=BLUE, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=8, pady=1,
-                  cursor="hand2", command=self._prompt_player_db_name_search).pack(side="right")
-        tk.Button(players_header, text="Limpiar", bg=BG, fg=TEXT,
-                  font=("Segoe UI", 7), relief="flat", padx=8, pady=1,
-                  cursor="hand2", command=self._reset_player_db_filters).pack(side="right", padx=(0, 4))
+        tk.Label(players_header, text="Players por Actor ID", bg=PANEL,
+                 fg=TEXT_SECONDARY, font=FONT_LABEL).pack(side="left")
+        self._make_pill_button(players_header, "Buscar nombre",
+                               command=self._prompt_player_db_name_search,
+                               variant="secondary", size="sm").pack(side="right")
+        self._make_pill_button(players_header, "Limpiar",
+                               command=self._reset_player_db_filters,
+                               variant="ghost", size="sm").pack(side="right", padx=(0, SP_1))
         players_form = tk.Frame(players_box, bg=PANEL)
-        players_form.pack(fill="x", pady=(6, 6))
+        players_form.pack(fill="x", pady=(SP_2, SP_1))
         self._player_db_id_var = tk.StringVar()
         self._player_db_name_var = tk.StringVar()
-        tk.Label(players_form, text="Actor ID:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
+        tk.Label(players_form, text="Actor ID:", bg=PANEL, fg=TEXT_TERTIARY,
+                 font=FONT_CAPTION).pack(side="left")
         tk.Entry(players_form, textvariable=self._player_db_id_var, width=10,
-                 bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
-                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4))
-        tk.Label(players_form, text="Nombre:", bg=PANEL, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left", padx=(4, 0))
+                 bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=BRAND, relief="flat",
+                 highlightthickness=1, highlightbackground=BORDER_DEFAULT, highlightcolor=BRAND,
+                 font=FONT_MONO_SMALL).pack(side="left", padx=(SP_1, SP_1))
+        tk.Label(players_form, text="Nombre:", bg=PANEL, fg=TEXT_TERTIARY,
+                 font=FONT_CAPTION).pack(side="left", padx=(SP_1, 0))
         tk.Entry(players_form, textvariable=self._player_db_name_var, width=22,
-                 bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat",
-                 font=("Segoe UI", 8)).pack(side="left", padx=(6, 4), fill="x", expand=True)
-        tk.Button(players_form, text="Guardar en base", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._save_player_db_entry).pack(side="left")
-        tk.Button(players_form, text="Refrescar", bg=CARD, fg=TEXT,
-                  font=("Segoe UI", 7), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._refresh_database_tab).pack(side="left", padx=(4, 0))
+                 bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=BRAND, relief="flat",
+                 highlightthickness=1, highlightbackground=BORDER_DEFAULT, highlightcolor=BRAND,
+                 font=FONT_CAPTION).pack(side="left", padx=(SP_1, SP_1), fill="x", expand=True)
+        self._make_pill_button(players_form, "Guardar",
+                               command=self._save_player_db_entry,
+                               variant="success", size="sm").pack(side="left")
+        self._make_pill_button(players_form, "Refrescar",
+                               command=self._refresh_database_tab,
+                               variant="ghost", size="sm").pack(side="left", padx=(SP_1, 0))
         players_text_frame = tk.Frame(players_box, bg=PANEL)
         players_text_frame.pack(fill="both", expand=True)
         players_tree = ttk.Treeview(players_text_frame, columns=("id", "name", "state"), show="headings", height=8)
@@ -3372,9 +4168,11 @@ class App(tk.Tk):
             return
         enabled = bool(self.config_data.get("navigation", {}).get("enabled", True))
         if enabled:
-            self._leveling_route_toggle_btn.config(text="Ruta: ON", bg=GREEN, fg=BG)
+            self._leveling_route_toggle_btn.config(text="Ruta: ON")
+            self._set_pill_state(self._leveling_route_toggle_btn, enabled=True, variant="success")
         else:
-            self._leveling_route_toggle_btn.config(text="Ruta: OFF", bg=RED, fg=TEXT)
+            self._leveling_route_toggle_btn.config(text="Ruta: OFF")
+            self._set_pill_state(self._leveling_route_toggle_btn, enabled=True, variant="danger")
 
     def _toggle_leveling_route_enabled(self):
         nav = self.config_data.setdefault("navigation", {})
@@ -3645,6 +4443,16 @@ class App(tk.Tk):
         state = "activo" if enabled else "inactivo"
         self.log_queue.put(("log", f"[MOBS] ignorar grupos de 1 mob: {state}"))
 
+    def _save_lvl_ratas_mode(self):
+        leveling_cfg = self.config_data.setdefault("leveling", {})
+        enabled = bool(self._lvl_ratas_var.get()) if hasattr(self, "_lvl_ratas_var") else False
+        leveling_cfg["lvl_ratas_mode"] = enabled
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        state = "activo" if enabled else "inactivo"
+        self.log_queue.put(("log", f"[COMBAT] Lvl ratas mode: {state}"))
+
     def _save_template_db_entry(self):
         raw_id = (self._template_db_id_var.get() or "").strip()
         raw_name = (self._template_db_name_var.get() or "").strip()
@@ -3784,6 +4592,77 @@ class App(tk.Tk):
         save_config(self.config_data)
         self.config_data = load_config()
         self._sync_runtime_bot_config()
+
+    def _fit_visual_grid_from_points(
+        self, points: list[tuple[int, float, float]]
+    ) -> dict | None:
+        """LSQ de 4 params iso (cell_w, cell_h, offset_x, offset_y) desde puntos manuales.
+
+        Input: lista de `(cell_id, screen_x_abs, screen_y_abs)`. Requiere >=3 puntos
+        válidos con grid (x-y) diverso. Retorna dict con fit + rmse + canvas_w/h, o
+        None si el sistema es singular. Mismo algoritmo que
+        scripts/recalibrate_visual_grid.py para mantener una sola fuente de verdad.
+        """
+        bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+        if bot is None or not points or len(points) < 3:
+            return None
+        cal = self.config_data.get("bot", {}).get("cell_calibration", {}) or {}
+        try:
+            map_width = int(cal.get("map_width", 15) or 15)
+        except (TypeError, ValueError):
+            map_width = 15
+        monitor = dict(bot.screen.monitor)
+        mon_left = float(monitor.get("left", 0) or 0)
+        mon_top = float(monitor.get("top", 0) or 0)
+        xs_x, xs_rhs, ys_y, ys_rhs = [], [], [], []
+        used: list[tuple[int, int, int, float, float]] = []
+        for raw in points:
+            try:
+                cid = int(raw[0])
+                sx = float(raw[1]) - mon_left
+                sy = float(raw[2]) - mon_top
+            except (TypeError, ValueError, IndexError):
+                continue
+            gx, gy = cell_id_to_grid(cid, map_width)
+            xs_x.append([1.0, float(gx - gy)])
+            xs_rhs.append(sx)
+            ys_y.append([1.0, float(gx + gy)])
+            ys_rhs.append(sy)
+            used.append((cid, gx, gy, sx, sy))
+        if len(xs_x) < 3:
+            return None
+        Mx = np.array(xs_x, dtype=float)
+        My = np.array(ys_y, dtype=float)
+        if np.linalg.matrix_rank(Mx) < 2 or np.linalg.matrix_rank(My) < 2:
+            return None
+        cx, _, _, _ = np.linalg.lstsq(Mx, np.array(xs_rhs, dtype=float), rcond=None)
+        cy, _, _, _ = np.linalg.lstsq(My, np.array(ys_rhs, dtype=float), rcond=None)
+        bias_x, slope_x = float(cx[0]), float(cx[1])
+        bias_y, slope_y = float(cy[0]), float(cy[1])
+        if slope_x <= 0 or slope_y <= 0:
+            return None
+        cell_width = 2.0 * slope_x
+        cell_height = 2.0 * slope_y
+        offset_x = bias_x - slope_x
+        offset_y = bias_y - slope_y
+        residuals_sq = []
+        for cid, gx, gy, sx, sy in used:
+            pred_x = bias_x + slope_x * (gx - gy)
+            pred_y = bias_y + slope_y * (gx + gy)
+            rx = pred_x - sx
+            ry = pred_y - sy
+            residuals_sq.append(rx * rx + ry * ry)
+        rmse = float(np.sqrt(np.mean(residuals_sq))) if residuals_sq else -1.0
+        return {
+            "cell_width": round(cell_width, 2),
+            "cell_height": round(cell_height, 2),
+            "offset_x": round(offset_x, 2),
+            "offset_y": round(offset_y, 2),
+            "canvas_width": int(monitor.get("width", 0) or 0),
+            "canvas_height": int(monitor.get("height", 0) or 0),
+            "rmse": round(rmse, 2),
+            "samples_used": len(used),
+        }
 
     def _save_world_map_calibration_sample(self, calibration: dict):
         map_id = calibration.get("map_id")
@@ -4160,6 +5039,8 @@ class App(tk.Tk):
             "cell_height": round(cell_height, 2),
             "offset_x": round(offset_x, 2),
             "offset_y": round(offset_y, 2),
+            # Marcador: override deliberado del usuario (anclaje manual).
+            "specific": True,
         }
         save_config(self.config_data)
         self.config_data = load_config()
@@ -4177,6 +5058,372 @@ class App(tk.Tk):
             f"[GRID] offset anclado map_id={map_id} actor={actor_id} cell={cell_id} mouse={mouse_pos} "
             f"offset=({round(offset_x,2)},{round(offset_y,2)})"
         ))
+
+    # ── Panel "Calibración LSQ (6 puntos)" ──────────────────────────────────
+    # Modelo de datos: 6 StringVars por fila (cell_id, mouse_x, mouse_y) +
+    # input map_id para modo "específica". Persisten en
+    # config.yaml → bot.cell_calibration.calibration_staging_points
+    # (lista de hasta 6 dicts con cell_id/mouse_x/mouse_y).
+
+    def _load_lsq_staging(self):
+        """Carga los 6 puntos persistidos en las StringVars de la UI."""
+        staging = (self.config_data.get("bot", {}).get("cell_calibration", {})
+                   .get("calibration_staging_points", []) or [])
+        if not isinstance(staging, list):
+            staging = []
+        for idx, row in enumerate(self._lsq_rows):
+            if idx >= len(staging) or not isinstance(staging[idx], dict):
+                row["cell"].set("")
+                row["x"].set("")
+                row["y"].set("")
+                continue
+            entry = staging[idx]
+            cell = entry.get("cell_id")
+            mx = entry.get("mouse_x")
+            my = entry.get("mouse_y")
+            row["cell"].set("" if cell in (None, "") else str(int(cell)))
+            row["x"].set("" if mx in (None, "") else str(int(mx) if isinstance(mx, (int, float)) and float(mx).is_integer() else mx))
+            row["y"].set("" if my in (None, "") else str(int(my) if isinstance(my, (int, float)) and float(my).is_integer() else my))
+
+    def _persist_lsq_staging(self):
+        """Serializa las 6 StringVars a config (staging persistente)."""
+        rows_out: list[dict] = []
+        for row in self._lsq_rows:
+            entry: dict = {}
+            cell_s = row["cell"].get().strip()
+            x_s = row["x"].get().strip()
+            y_s = row["y"].get().strip()
+            if cell_s:
+                try:
+                    entry["cell_id"] = int(cell_s)
+                except ValueError:
+                    pass
+            if x_s:
+                try:
+                    entry["mouse_x"] = int(x_s)
+                except ValueError:
+                    try:
+                        entry["mouse_x"] = float(x_s)
+                    except ValueError:
+                        pass
+            if y_s:
+                try:
+                    entry["mouse_y"] = int(y_s)
+                except ValueError:
+                    try:
+                        entry["mouse_y"] = float(y_s)
+                    except ValueError:
+                        pass
+            rows_out.append(entry)
+        bot_cfg = self.config_data.setdefault("bot", {})
+        cal_cfg = bot_cfg.setdefault("cell_calibration", {})
+        cal_cfg["calibration_staging_points"] = rows_out
+        save_config(self.config_data)
+
+    def _schedule_persist_lsq_staging(self):
+        """Debounce de 500 ms para no escribir en cada tecla."""
+        if getattr(self, "_lsq_persist_after", None) is not None:
+            try:
+                self.after_cancel(self._lsq_persist_after)
+            except Exception:
+                pass
+        self._lsq_persist_after = self.after(500, self._persist_lsq_staging)
+
+    def _capture_lsq_row(self, index: int):
+        """Cuenta 3s, toma posición del mouse y rellena X/Y de esa fila."""
+        if not (0 <= index < len(self._lsq_rows)):
+            return
+        self._lsq_status_var.set(f"Fila {index+1}: acomoda el mouse, capturo en 3s…")
+
+        def _do():
+            time.sleep(3)
+            try:
+                mx, my = pyautogui.position()
+            except Exception:
+                mx, my = 0, 0
+            self.after(0, lambda: self._finish_capture_lsq_row(index, int(mx), int(my)))
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _finish_capture_lsq_row(self, index: int, mx: int, my: int):
+        row = self._lsq_rows[index]
+        row["x"].set(str(mx))
+        row["y"].set(str(my))
+        self._persist_lsq_staging()
+        self._lsq_status_var.set(f"Fila {index+1}: capturado mouse=({mx},{my})")
+        self.after(3500, lambda: self._lsq_status_var.set(""))
+
+    def _read_lsq_points(self) -> list[tuple[int, float, float]]:
+        """Extrae puntos válidos (cell_id + mouse_x + mouse_y presentes y parseables)."""
+        points: list[tuple[int, float, float]] = []
+        for row in self._lsq_rows:
+            try:
+                cid = int(row["cell"].get().strip())
+                mx = float(row["x"].get().strip())
+                my = float(row["y"].get().strip())
+            except (ValueError, TypeError):
+                continue
+            points.append((cid, mx, my))
+        return points
+
+    def _refresh_lsq_specific_map(self):
+        """Rellena el input de map_id con el mapa actual del bot."""
+        mid = self._current_runtime_map_id()
+        if mid is not None:
+            self._lsq_specific_map_var.set(str(int(mid)))
+            self._lsq_status_var.set(f"map_id actual = {int(mid)}")
+            self.after(2500, lambda: self._lsq_status_var.set(""))
+        else:
+            self._lsq_status_var.set("No hay map_id actual")
+            self.after(2500, lambda: self._lsq_status_var.set(""))
+
+    def _save_lsq_global(self):
+        """Fit LSQ de las 6 filas → escribe visual_grid_global.
+
+        Aplica como DEFAULT a todos los mapas EXCEPTO los que tengan override
+        explícito en visual_grid_by_map_id (que gana siempre por merge).
+        """
+        points = self._read_lsq_points()
+        if len(points) < 3:
+            messagebox.showerror(
+                "Puntos insuficientes",
+                f"Necesito ≥3 filas con celda + X + Y válidos. Tengo {len(points)}.",
+                parent=self,
+            )
+            return
+        fit = self._fit_visual_grid_from_points(points)
+        if not fit:
+            messagebox.showerror(
+                "Fit fallido",
+                "El sistema es singular. Usa celdas con grid (gx−gy) diverso\n"
+                "(no todas en la misma diagonal).",
+                parent=self,
+            )
+            return
+        if not messagebox.askyesno(
+            "Guardar calibración GLOBAL",
+            f"Aplicar como DEFAULT a todos los mapas sin override específico:\n\n"
+            f"  cell_width  = {fit['cell_width']}\n"
+            f"  cell_height = {fit['cell_height']}\n"
+            f"  offset_x    = {fit['offset_x']}\n"
+            f"  offset_y    = {fit['offset_y']}\n\n"
+            f"RMSE = {fit['rmse']} px sobre {fit['samples_used']} puntos.\n\n"
+            f"¿Confirmar?",
+            parent=self,
+        ):
+            self._lsq_status_var.set("Cancelado")
+            self.after(2000, lambda: self._lsq_status_var.set(""))
+            return
+        bot_cfg = self.config_data.setdefault("bot", {})
+        cal_cfg = bot_cfg.setdefault("cell_calibration", {})
+        global_entry = cal_cfg.get("visual_grid_global")
+        if not isinstance(global_entry, dict):
+            global_entry = {}
+        global_entry["cell_width"] = fit["cell_width"]
+        global_entry["cell_height"] = fit["cell_height"]
+        global_entry["offset_x"] = fit["offset_x"]
+        global_entry["offset_y"] = fit["offset_y"]
+        # canvas_width/height: el LSQ lo fittea en píxeles del monitor en el que
+        # se capturaron los 6 puntos, así que escribimos el tamaño del monitor para
+        # que el scaling en el bot sea identidad cuando se corre en el mismo setup.
+        global_entry["canvas_width"] = fit["canvas_width"]
+        global_entry["canvas_height"] = fit["canvas_height"]
+        cal_cfg["visual_grid_global"] = global_entry
+
+        # Auto-purgar overrides NO marcados como 'specific' para que el global aplique.
+        # visual_grid_by_map_id[map_id] gana siempre por merge sobre visual_grid_global.
+        # Entradas sembradas automáticamente o copiadas antes de este sistema NO tienen
+        # specific=True → son "clones del global viejo" y deben eliminarse para que el
+        # global nuevo tome efecto. Las que el usuario guardó vía botón ESPECÍFICA /
+        # Anclar offset SÍ tienen specific=True y se preservan.
+        by_map = cal_cfg.get("visual_grid_by_map_id", {}) or {}
+        purged_count = 0
+        kept_specific = 0
+        if isinstance(by_map, dict):
+            new_by_map = {}
+            for key, entry in by_map.items():
+                if isinstance(entry, dict) and (
+                    entry.get("specific") is True or entry.get("manual_lock") is True
+                ):
+                    new_by_map[key] = entry
+                    kept_specific += 1
+                else:
+                    purged_count += 1
+            cal_cfg["visual_grid_by_map_id"] = new_by_map
+
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        msg = (
+            f"GLOBAL guardado: cw={fit['cell_width']} ch={fit['cell_height']} "
+            f"ox={fit['offset_x']} oy={fit['offset_y']} rmse={fit['rmse']}px "
+            f"({fit['samples_used']} puntos) — purgadas {purged_count} clonas, "
+            f"preservadas {kept_specific} específicas"
+        )
+        self._lsq_status_var.set(msg)
+        self.after(6000, lambda: self._lsq_status_var.set(""))
+        self.log_queue.put(("log", f"[CAL-GLOBAL] {msg}"))
+
+    def _save_lsq_specific(self):
+        """Fit LSQ de las 6 filas → escribe visual_grid_by_map_id[map_id].
+
+        El específico tiene PRIORIDAD sobre el global (el lookup en
+        bot._visual_grid_settings_for_map hace merge con by_map ganando).
+        """
+        points = self._read_lsq_points()
+        if len(points) < 3:
+            messagebox.showerror(
+                "Puntos insuficientes",
+                f"Necesito ≥3 filas con celda + X + Y válidos. Tengo {len(points)}.",
+                parent=self,
+            )
+            return
+        raw_map = self._lsq_specific_map_var.get().strip()
+        try:
+            map_id = int(raw_map)
+        except (ValueError, TypeError):
+            messagebox.showerror(
+                "map_id inválido",
+                "Escribe un map_id numérico en la casilla (usa ↻ para traer el actual).",
+                parent=self,
+            )
+            return
+        fit = self._fit_visual_grid_from_points(points)
+        if not fit:
+            messagebox.showerror(
+                "Fit fallido",
+                "El sistema es singular. Usa celdas con grid (gx−gy) diverso.",
+                parent=self,
+            )
+            return
+        if not messagebox.askyesno(
+            "Guardar calibración ESPECÍFICA",
+            f"Aplicar SOLO a map_id={map_id} (sobre-escribe el global para este mapa):\n\n"
+            f"  cell_width  = {fit['cell_width']}\n"
+            f"  cell_height = {fit['cell_height']}\n"
+            f"  offset_x    = {fit['offset_x']}\n"
+            f"  offset_y    = {fit['offset_y']}\n\n"
+            f"RMSE = {fit['rmse']} px sobre {fit['samples_used']} puntos.\n\n"
+            f"¿Confirmar?",
+            parent=self,
+        ):
+            self._lsq_status_var.set("Cancelado")
+            self.after(2000, lambda: self._lsq_status_var.set(""))
+            return
+        bot_cfg = self.config_data.setdefault("bot", {})
+        cal_cfg = bot_cfg.setdefault("cell_calibration", {})
+        by_map = cal_cfg.setdefault("visual_grid_by_map_id", {})
+        by_map[str(int(map_id))] = {
+            "canvas_width": fit["canvas_width"],
+            "canvas_height": fit["canvas_height"],
+            "cell_width": fit["cell_width"],
+            "cell_height": fit["cell_height"],
+            "offset_x": fit["offset_x"],
+            "offset_y": fit["offset_y"],
+            # Marcador: override deliberado del usuario. Lo respeta el botón
+            # "Guardar como GLOBAL" al purgar overrides clones.
+            "specific": True,
+        }
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        try:
+            self._sniffer_grid_offset_x_var.set(fit["offset_x"])
+            self._sniffer_grid_offset_y_var.set(fit["offset_y"])
+            self._sniffer_grid_sync_entry_vars()
+            self._redraw_sniffer_grid_overlay()
+        except AttributeError:
+            pass
+        msg = (
+            f"ESPECÍFICA map_id={map_id}: cw={fit['cell_width']} "
+            f"ox={fit['offset_x']} oy={fit['offset_y']} rmse={fit['rmse']}px "
+            f"({fit['samples_used']} puntos)"
+        )
+        self._lsq_status_var.set(msg)
+        self.after(6000, lambda: self._lsq_status_var.set(""))
+        self.log_queue.put(("log", f"[CAL-MAP] {msg}"))
+
+    def _build_lsq_calibration_panel(self, parent):
+        """Panel de 6 filas (Celda / X / Y / Capturar) + botones global/específica.
+
+        Persistencia: cada cambio dispara debounce de 500 ms → serializa a
+        bot.cell_calibration.calibration_staging_points en config.yaml.
+        """
+        self._lsq_rows: list[dict] = []
+        self._lsq_specific_map_var = tk.StringVar(value="")
+        self._lsq_status_var = tk.StringVar(value="")
+        self._lsq_persist_after = None
+
+        container = tk.LabelFrame(
+            parent, text="  Calibración LSQ (6 puntos)  ",
+            bg=BG, fg=TEXT, bd=1, relief="solid",
+            font=("Segoe UI", 9, "bold"), padx=8, pady=6,
+        )
+        container.pack(fill="x", pady=(8, 0))
+
+        hint = tk.Label(
+            container,
+            text=("Escribe un cell_id en 'Celda', posiciona el mouse y pulsa 'Capturar mouse (3s)'. "
+                  "Necesitas ≥3 filas completas con celdas en diagonales distintas."),
+            bg=BG, fg=SUBTEXT, font=("Segoe UI", 8), anchor="w", justify="left",
+        )
+        hint.pack(fill="x", pady=(0, 4))
+
+        for i in range(6):
+            row = tk.Frame(container, bg=BG)
+            row.pack(fill="x", pady=(2, 0))
+            tk.Label(row, text=f"{i+1}.", bg=BG, fg=SUBTEXT,
+                     font=("Segoe UI", 8, "bold"), width=2).pack(side="left")
+            tk.Label(row, text="Celda", bg=BG, fg=SUBTEXT,
+                     font=("Segoe UI", 8)).pack(side="left", padx=(6, 2))
+            cell_var = tk.StringVar()
+            tk.Entry(row, textvariable=cell_var, width=6, bg=CARD, fg=TEXT,
+                     insertbackground=TEXT, relief="flat",
+                     font=("Segoe UI", 9)).pack(side="left")
+            tk.Label(row, text="X", bg=BG, fg=SUBTEXT,
+                     font=("Segoe UI", 8)).pack(side="left", padx=(10, 2))
+            x_var = tk.StringVar()
+            tk.Entry(row, textvariable=x_var, width=7, bg=CARD, fg=TEXT,
+                     insertbackground=TEXT, relief="flat",
+                     font=("Segoe UI", 9)).pack(side="left")
+            tk.Label(row, text="Y", bg=BG, fg=SUBTEXT,
+                     font=("Segoe UI", 8)).pack(side="left", padx=(8, 2))
+            y_var = tk.StringVar()
+            tk.Entry(row, textvariable=y_var, width=7, bg=CARD, fg=TEXT,
+                     insertbackground=TEXT, relief="flat",
+                     font=("Segoe UI", 9)).pack(side="left")
+            tk.Button(row, text="Capturar mouse (3s)", bg=YELLOW, fg=BG,
+                      font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                      cursor="hand2",
+                      command=lambda idx=i: self._capture_lsq_row(idx)).pack(side="left", padx=(12, 0))
+            self._lsq_rows.append({"cell": cell_var, "x": x_var, "y": y_var})
+            cell_var.trace_add("write", lambda *_: self._schedule_persist_lsq_staging())
+            x_var.trace_add("write", lambda *_: self._schedule_persist_lsq_staging())
+            y_var.trace_add("write", lambda *_: self._schedule_persist_lsq_staging())
+
+        # Carga inicial desde config
+        self._load_lsq_staging()
+
+        # Fila de acciones (guardar + map_id específico)
+        action_row = tk.Frame(container, bg=BG)
+        action_row.pack(fill="x", pady=(10, 0))
+        tk.Button(action_row, text="Guardar como GLOBAL", bg=GREEN, fg=BG,
+                  font=("Segoe UI", 9, "bold"), relief="flat", padx=12, pady=4,
+                  cursor="hand2", command=self._save_lsq_global).pack(side="left")
+        tk.Label(action_row, text="   Específica map_id =", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 8, "bold")).pack(side="left", padx=(16, 4))
+        tk.Entry(action_row, textvariable=self._lsq_specific_map_var, width=7,
+                 bg=CARD, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 font=("Segoe UI", 9)).pack(side="left")
+        tk.Button(action_row, text="↻", bg=CARD, fg=TEXT,
+                  font=("Segoe UI", 9, "bold"), relief="flat", padx=6, pady=2,
+                  cursor="hand2", command=self._refresh_lsq_specific_map).pack(side="left", padx=(3, 6))
+        tk.Button(action_row, text="Guardar como ESPECÍFICA", bg=BLUE, fg=BG,
+                  font=("Segoe UI", 9, "bold"), relief="flat", padx=12, pady=4,
+                  cursor="hand2", command=self._save_lsq_specific).pack(side="left")
+        tk.Label(action_row, textvariable=self._lsq_status_var,
+                 bg=BG, fg=YELLOW, font=("Segoe UI", 8, "bold"),
+                 anchor="w").pack(side="left", padx=(14, 0), fill="x", expand=True)
 
     def _delete_selected_sniffer_sample(self, status_var: tk.StringVar | None = None):
         selection = self._sniffer_sample_selection
@@ -4214,6 +5461,189 @@ class App(tk.Tk):
             self.after(3500, lambda: status_var.set(""))
         self.log_queue.put(("log", f"[CAL] calibración limpiada map_id={map_id} removed={removed}"))
         self._refresh_sniffer_tab()
+
+    # ── Calibración por celda (learned_offsets + spell_jitter_offsets) ──────
+    def _start_correct_cell_offset(self, entry: dict | None, status_var: tk.StringVar | None = None):
+        """Corrige el offset aprendido de una celda:
+        tras 3s captura mouse_pos y ajusta `learned_offsets_by_map_id[map][by_cell][cell]`
+        para que futuros clicks caigan EXACTAMENTE donde el usuario apunte."""
+        if not entry:
+            messagebox.showinfo("Sin selección", "Selecciona una celda/entidad primero.", parent=self)
+            return
+        bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+        if bot is None:
+            messagebox.showinfo("Bot detenido", "Inicia el bot primero.", parent=self)
+            return
+        map_id = self._current_runtime_map_id()
+        if map_id is None:
+            messagebox.showwarning("Sin map_id", "No hay map_id actual.", parent=self)
+            return
+        try:
+            cell_id = int(entry.get("cell_id"))
+        except (TypeError, ValueError):
+            messagebox.showwarning("Cell inválida", "La selección no tiene cell_id válido.", parent=self)
+            return
+        if status_var is not None:
+            status_var.set(f"Posiciona mouse donde el bot debería clickear cell={cell_id}. Capturo en 3s...")
+
+        def _do():
+            time.sleep(3)
+            mx, my = pyautogui.position()
+            self.after(
+                0,
+                lambda: self._finish_correct_cell_offset(
+                    int(map_id), int(cell_id), (int(mx), int(my)), status_var
+                ),
+            )
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _finish_correct_cell_offset(
+        self,
+        map_id: int,
+        cell_id: int,
+        mouse_pos: tuple[int, int],
+        status_var: tk.StringVar | None = None,
+    ):
+        bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+        if bot is None:
+            if status_var is not None:
+                status_var.set("Bot detenido")
+            return
+        try:
+            projected = bot._movement_click_pos_for_cell(int(cell_id))
+        except Exception as e:
+            if status_var is not None:
+                status_var.set(f"Error proyectando cell: {e}")
+            return
+        if projected is None:
+            if status_var is not None:
+                status_var.set(f"No puedo proyectar cell={cell_id}")
+            return
+        delta_x = int(mouse_pos[0]) - int(projected[0])
+        delta_y = int(mouse_pos[1]) - int(projected[1])
+        cal = bot.config.setdefault("bot", {}).setdefault("combat_calibration", {})
+        learned = cal.setdefault("learned_offsets_by_map_id", {})
+        map_entry = learned.setdefault(str(map_id), {})
+        by_cell = map_entry.setdefault("by_cell", {})
+        prev = by_cell.get(str(cell_id)) or by_cell.get(cell_id) or {}
+        try:
+            prev_dx = int(prev.get("dx", 0) or 0)
+            prev_dy = int(prev.get("dy", 0) or 0)
+        except (TypeError, ValueError, AttributeError):
+            prev_dx, prev_dy = 0, 0
+        new_dx = prev_dx + delta_x
+        new_dy = prev_dy + delta_y
+        by_cell[str(cell_id)] = {"dx": new_dx, "dy": new_dy}
+        try:
+            bot._persist_combat_calibration()
+        except Exception as e:
+            self.log_queue.put(("log", f"[CALIB] persist falló: {e}"))
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        msg = (
+            f"cell={cell_id}: learned ({prev_dx:+d},{prev_dy:+d})→({new_dx:+d},{new_dy:+d}) "
+            f"delta=({delta_x:+d},{delta_y:+d})"
+        )
+        if status_var is not None:
+            status_var.set(msg)
+            self.after(4000, lambda: status_var.set(""))
+        self.log_queue.put((
+            "log",
+            f"[CALIB] map_id={map_id} {msg} mouse={mouse_pos} proj={projected}",
+        ))
+
+    def _delete_selected_cell_offset(self, entry: dict | None, status_var: tk.StringVar | None = None):
+        """Borra learned_offsets + spell_jitter_offsets de la celda seleccionada."""
+        if not entry:
+            messagebox.showinfo("Sin selección", "Selecciona una celda/entidad primero.", parent=self)
+            return
+        bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+        if bot is None:
+            messagebox.showinfo("Bot detenido", "Inicia el bot primero.", parent=self)
+            return
+        map_id = self._current_runtime_map_id()
+        if map_id is None:
+            messagebox.showwarning("Sin map_id", "No hay map_id actual.", parent=self)
+            return
+        try:
+            cell_id = int(entry.get("cell_id"))
+        except (TypeError, ValueError):
+            messagebox.showwarning("Cell inválida", "La selección no tiene cell_id válido.", parent=self)
+            return
+        cal = bot.config.setdefault("bot", {}).setdefault("combat_calibration", {})
+        removed: list[str] = []
+        for dict_name in ("learned_offsets_by_map_id", "spell_jitter_offsets_by_map_id"):
+            d = cal.get(dict_name) or {}
+            map_entry = d.get(str(map_id)) or d.get(map_id)
+            if not isinstance(map_entry, dict):
+                continue
+            by_cell = map_entry.get("by_cell")
+            if not isinstance(by_cell, dict):
+                continue
+            popped = False
+            for k in (str(cell_id), cell_id):
+                if k in by_cell:
+                    by_cell.pop(k)
+                    popped = True
+                    break
+            if popped:
+                removed.append(dict_name)
+        if removed:
+            try:
+                bot._persist_combat_calibration()
+            except Exception as e:
+                self.log_queue.put(("log", f"[CALIB] persist falló: {e}"))
+            self.config_data = load_config()
+            self._sync_runtime_bot_config()
+            msg = f"cell={cell_id} borrado de {', '.join(removed)}"
+        else:
+            msg = f"cell={cell_id}: sin offsets que borrar"
+        if status_var is not None:
+            status_var.set(msg)
+            self.after(3500, lambda: status_var.set(""))
+        self.log_queue.put(("log", f"[CALIB] map_id={map_id} {msg}"))
+
+    def _clear_map_cell_offsets(self, status_var: tk.StringVar | None = None):
+        """Borra TODOS los learned_offsets + spell_jitter_offsets del mapa actual."""
+        bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+        if bot is None:
+            messagebox.showinfo("Bot detenido", "Inicia el bot primero.", parent=self)
+            return
+        map_id = self._current_runtime_map_id()
+        if map_id is None:
+            messagebox.showwarning("Sin map_id", "No hay map_id actual.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Confirmar",
+            f"¿Borrar TODOS los learned_offsets + spell_jitter del mapa {map_id}?",
+            parent=self,
+        ):
+            return
+        cal = bot.config.setdefault("bot", {}).setdefault("combat_calibration", {})
+        removed: list[str] = []
+        for dict_name in ("learned_offsets_by_map_id", "spell_jitter_offsets_by_map_id"):
+            d = cal.get(dict_name) or {}
+            if str(map_id) in d:
+                d.pop(str(map_id))
+                removed.append(dict_name)
+            elif map_id in d:
+                d.pop(map_id)
+                removed.append(dict_name)
+        if removed:
+            try:
+                bot._persist_combat_calibration()
+            except Exception as e:
+                self.log_queue.put(("log", f"[CALIB] persist falló: {e}"))
+            self.config_data = load_config()
+            self._sync_runtime_bot_config()
+            msg = f"map_id={map_id}: borrado {', '.join(removed)}"
+        else:
+            msg = f"map_id={map_id}: sin offsets que borrar"
+        if status_var is not None:
+            status_var.set(msg)
+            self.after(3500, lambda: status_var.set(""))
+        self.log_queue.put(("log", f"[CALIB] {msg}"))
 
     def _get_visual_grid_settings(self, map_id: int | None, width: int, height: int) -> dict:
         cell_cal = self.config_data.get("bot", {}).get("cell_calibration", {}) or {}
@@ -4254,36 +5684,12 @@ class App(tk.Tk):
         self._sync_runtime_bot_config()
 
     def _ensure_visual_grid_saved_for_map(self, map_id: int, width: int, height: int) -> bool:
-        bot_cfg = self.config_data.setdefault("bot", {})
-        cal_cfg = bot_cfg.setdefault("cell_calibration", {})
-        global_base = cal_cfg.get("visual_grid_global", {}) or {}
-        if not isinstance(global_base, dict):
-            return False
-        required = ("cell_width", "cell_height", "offset_x", "offset_y")
-        if not all(global_base.get(key) not in (None, "") for key in required):
-            return False
-        by_map = cal_cfg.setdefault("visual_grid_by_map_id", {})
-        key = str(map_id)
-        raw = by_map.get(key)
-        if not isinstance(raw, dict):
-            raw = {}
-        changed = False
-        for field in required:
-            if raw.get(field) in (None, ""):
-                raw[field] = round(float(global_base[field]), 2)
-                changed = True
-        if raw.get("canvas_width") in (None, "", 0):
-            raw["canvas_width"] = int(width)
-            changed = True
-        if raw.get("canvas_height") in (None, "", 0):
-            raw["canvas_height"] = int(height)
-            changed = True
-        if changed:
-            by_map[key] = raw
-            save_config(self.config_data)
-            self.config_data = load_config()
-            self._sync_runtime_bot_config()
-        return changed
+        """No-op. Antes clonaba visual_grid_global → visual_grid_by_map_id[map_id]
+        cada vez que el usuario abría el sniffer grid en un mapa. Esas clonas tapan
+        el global vía merge cuando el global se recalibra. Ahora el lookup tiene
+        fallback al global, así que el seed no hace falta.
+        """
+        return False
 
     def _save_current_visual_grid_as_global(self, status_var: tk.StringVar | None = None):
         bot_cfg = self.config_data.setdefault("bot", {})
@@ -4331,7 +5737,11 @@ class App(tk.Tk):
         self._sniffer_grid_photo = ImageTk.PhotoImage(resized)
         self._sniffer_grid_scale = scale
         map_id = bot._current_map_id
-        if map_id != self._sniffer_grid_last_map_id:
+        # Guard: bot._current_map_id puede ser None antes de que el sniffer parsee
+        # MAPA_DATA (arranque, ventana del juego no enfocada, etc.). En ese caso
+        # _ensure_visual_grid_saved_for_map no tiene a quién aplicar — saltamos
+        # el seeding y dejamos que el próximo tick lo intente cuando map_id exista.
+        if map_id is not None and map_id != self._sniffer_grid_last_map_id:
             seeded = self._ensure_visual_grid_saved_for_map(int(map_id), int(resized.width), int(resized.height))
             settings = self._get_visual_grid_settings(map_id, resized.width, resized.height)
             self._sniffer_grid_cell_width_var.set(settings["cell_width"])
@@ -4594,6 +6004,21 @@ class App(tk.Tk):
         state = "activado" if self._combat_manual_mode_var.get() else "desactivado"
         self.log_queue.put(("log", f"[BOT] Modo manual en combate {state}"))
 
+    def _save_combat_telemetry_setting(self):
+        enabled = bool(self._combat_telemetry_var.get())
+        self.config_data.setdefault("bot", {})["combat_telemetry"] = enabled
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        try:
+            from telemetry import configure_from_dict as _cfg_tel
+            _cfg_tel(self.config_data.get("bot", {}))
+        except Exception as exc:
+            self.log_queue.put(("log", f"[TELEMETRY] error reconfigurando: {exc!r}"))
+            return
+        state = "activada" if enabled else "desactivada"
+        self.log_queue.put(("log", f"[TELEMETRY] Telemetria de combate {state} (logs/combat-*.jsonl)"))
+
     def _toggle_sniffer_debug(self):
         """Abre ventana con log raw de paquetes Dofus para descubrir actor_id."""
         win = tk.Toplevel(self)
@@ -4630,6 +6055,127 @@ class App(tk.Tk):
         win.protocol("WM_DELETE_WINDOW", lambda: (setattr(self, "_raw_log_cb", None), win.destroy()))
         poll()
 
+    # ── Click offsets panel (placement / combat / world) ───────────────────
+    _CLICK_OFFSET_CATEGORIES = (
+        ("placement", "Fase posicionamiento"),
+        ("combat",    "Combate"),
+        ("world",     "Movimiento entre mapas"),
+    )
+
+    def _click_offset_cfg_keys(self, category: str) -> tuple[str, str]:
+        return (f"{category}_click_offset_x", f"{category}_click_offset_y")
+
+    def _read_click_offset(self, category: str) -> tuple[float, float]:
+        """Lee (x, y) del mode o cae al global_click_offset_[xy]."""
+        cal = (self.config_data.get("bot", {}) or {}).get("cell_calibration", {}) or {}
+        kx, ky = self._click_offset_cfg_keys(category)
+        def _num(v, default=0.0):
+            if v is None:
+                return float(default)
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return float(default)
+        base_x = _num(cal.get("global_click_offset_x"), 0.0)
+        base_y = _num(cal.get("global_click_offset_y"), 0.0)
+        return (_num(cal.get(kx), base_x), _num(cal.get(ky), base_y))
+
+    def _write_click_offset(self, category: str, axis: str, value_str: str) -> bool:
+        try:
+            v = float(value_str.replace(",", "."))
+        except (TypeError, ValueError):
+            return False
+        cal = self.config_data.setdefault("bot", {}).setdefault("cell_calibration", {})
+        kx, ky = self._click_offset_cfg_keys(category)
+        key = kx if axis == "x" else ky
+        # Guardar como int si es entero, sino como float
+        store_val = int(round(v)) if abs(v - round(v)) < 1e-6 else round(v, 2)
+        cal[key] = store_val
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        return True
+
+    def _build_click_offsets_panel(self, parent):
+        frame = tk.Frame(parent, bg=BG)
+        frame.pack(fill="x", pady=(8, 0))
+        tk.Label(frame, text="Click offsets (px)", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        tk.Label(
+            frame,
+            text="Bias aplicado al click cell→pixel según la fase. Vacío = usa global_click_offset.",
+            bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)
+        ).pack(anchor="w")
+
+        self._click_offset_vars: dict[str, dict[str, tk.StringVar]] = {}
+        self._click_offset_status_var = tk.StringVar(value="")
+
+        row = tk.Frame(frame, bg=BG)
+        row.pack(fill="x", pady=(4, 0))
+
+        for category, label in self._CLICK_OFFSET_CATEGORIES:
+            cell = tk.Frame(row, bg=PANEL, padx=8, pady=6)
+            cell.pack(side="left", padx=(0, 6))
+            tk.Label(cell, text=label, bg=PANEL, fg=TEXT,
+                     font=("Segoe UI", 8, "bold")).pack(anchor="w")
+            inputs = tk.Frame(cell, bg=PANEL)
+            inputs.pack(anchor="w", pady=(2, 0))
+
+            x_val, y_val = self._read_click_offset(category)
+            var_x = tk.StringVar(value=str(x_val if x_val != int(x_val) else int(x_val)))
+            var_y = tk.StringVar(value=str(y_val if y_val != int(y_val) else int(y_val)))
+            self._click_offset_vars[category] = {"x": var_x, "y": var_y}
+
+            tk.Label(inputs, text="X", bg=PANEL, fg=SUBTEXT,
+                     font=("Segoe UI", 8)).grid(row=0, column=0, padx=(0, 2))
+            ent_x = tk.Entry(inputs, textvariable=var_x, width=6,
+                             bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat")
+            ent_x.grid(row=0, column=1, padx=(0, 8))
+            tk.Label(inputs, text="Y", bg=PANEL, fg=SUBTEXT,
+                     font=("Segoe UI", 8)).grid(row=0, column=2, padx=(0, 2))
+            ent_y = tk.Entry(inputs, textvariable=var_y, width=6,
+                             bg=BG, fg=TEXT, insertbackground=BLUE, relief="flat")
+            ent_y.grid(row=0, column=3)
+
+            def _make_saver(cat=category, axis="x", var=var_x):
+                def _save(_event=None):
+                    ok = self._write_click_offset(cat, axis, var.get())
+                    if ok:
+                        self._click_offset_status_var.set(
+                            f"Guardado {cat}_click_offset_{axis}={var.get()}"
+                        )
+                    else:
+                        self._click_offset_status_var.set(
+                            f"Valor inválido para {cat}.{axis}"
+                        )
+                        # Restaurar el valor previo visualmente
+                        cur_x, cur_y = self._read_click_offset(cat)
+                        cur = cur_x if axis == "x" else cur_y
+                        var.set(str(cur if cur != int(cur) else int(cur)))
+                    if hasattr(self, "after"):
+                        self.after(2500, lambda: self._click_offset_status_var.set(""))
+                return _save
+
+            ent_x.bind("<Return>",   _make_saver(category, "x", var_x))
+            ent_x.bind("<FocusOut>", _make_saver(category, "x", var_x))
+            ent_y.bind("<Return>",   _make_saver(category, "y", var_y))
+            ent_y.bind("<FocusOut>", _make_saver(category, "y", var_y))
+
+        tk.Label(row, textvariable=self._click_offset_status_var,
+                 bg=BG, fg=YELLOW, font=("Segoe UI", 8, "bold")).pack(side="left", padx=(8, 0))
+
+    def _refresh_click_offsets_panel(self):
+        """Recarga los valores visibles desde config (útil tras edits externos)."""
+        if not hasattr(self, "_click_offset_vars"):
+            return
+        for category, _label in self._CLICK_OFFSET_CATEGORIES:
+            vars_ = self._click_offset_vars.get(category)
+            if not vars_:
+                continue
+            x_val, y_val = self._read_click_offset(category)
+            vars_["x"].set(str(x_val if x_val != int(x_val) else int(x_val)))
+            vars_["y"].set(str(y_val if y_val != int(y_val) else int(y_val)))
+
     def _build_sniffer_tab(self, parent):
         self._sniffer_tab = parent
         top = tk.Frame(parent, bg=BG, padx=10, pady=8)
@@ -4650,6 +6196,8 @@ class App(tk.Tk):
         action_row_1.pack(fill="x")
         action_row_2 = tk.Frame(action_row, bg=BG)
         action_row_2.pack(fill="x", pady=(6, 0))
+        action_row_3 = tk.Frame(action_row, bg=BG)
+        action_row_3.pack(fill="x", pady=(6, 0))
         self._sniffer_copy_status_var = tk.StringVar(value="")
         self._sniffer_test_status_var = tk.StringVar(value="")
         tk.Button(action_row_1, text="Copiar todo", bg=GREEN, fg=BG,
@@ -4692,6 +6240,29 @@ class App(tk.Tk):
                  font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
         tk.Label(action_row_2, textvariable=self._sniffer_test_status_var, bg=BG, fg=YELLOW,
                  font=("Segoe UI", 8, "bold")).pack(side="left", padx=(12, 0))
+
+        # Fila 3 — Calibración por cell (learned_offsets + spell_jitter)
+        tk.Label(action_row_3, text="Offsets cell:", bg=BG, fg=SUBTEXT,
+                 font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 4))
+        tk.Button(action_row_3, text="Corregir offset cell (3s)", bg=BLUE, fg=BG,
+                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                  cursor="hand2",
+                  command=lambda: self._start_correct_cell_offset(self._sniffer_selection_entry, self._sniffer_test_status_var)
+                  ).pack(side="left", padx=(0, 6))
+        tk.Button(action_row_3, text="Borrar offset cell", bg=RED, fg=TEXT,
+                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                  cursor="hand2",
+                  command=lambda: self._delete_selected_cell_offset(self._sniffer_selection_entry, self._sniffer_test_status_var)
+                  ).pack(side="left", padx=(0, 6))
+        tk.Button(action_row_3, text="Borrar TODOS offsets del mapa", bg=RED, fg=TEXT,
+                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
+                  cursor="hand2",
+                  command=lambda: self._clear_map_cell_offsets(self._sniffer_test_status_var)
+                  ).pack(side="left", padx=(0, 6))
+
+        self._build_lsq_calibration_panel(top)
+
+        self._build_click_offsets_panel(top)
 
         body = tk.Frame(parent, bg=BG, padx=10, pady=6)
         body.pack(fill="both", expand=True)
@@ -4951,7 +6522,9 @@ class App(tk.Tk):
             self._sniffer_sample_entries.clear()
             for sample in current_samples:
                 try:
-                    cell_id = int(sample.get("cell_id"))
+                    cell_id_raw = sample.get("cell_id")
+                    if cell_id_raw is None: continue
+                    cell_id = int(cell_id_raw)
                 except (TypeError, ValueError, AttributeError):
                     continue
                 grid_x = sample.get("grid_x")
@@ -5002,6 +6575,36 @@ class App(tk.Tk):
                     break
             else:
                 self._sniffer_selection_entry = None
+
+        # Restaurar selección en el árbol de muestras (igual que el árbol principal):
+        # cada refresh re-inserta items nuevos, perdiendo la selección del usuario.
+        previous_sample = self._sniffer_sample_selection
+        if previous_sample and self._sniffer_samples_tree is not None:
+            try:
+                prev_cell_id = int(previous_sample.get("cell_id"))
+            except (TypeError, ValueError, AttributeError):
+                prev_cell_id = None
+            prev_saved_at = previous_sample.get("saved_at")
+            if prev_cell_id is not None:
+                matched = False
+                for item_id, sample in self._sniffer_sample_entries.items():
+                    try:
+                        s_cell = int(sample.get("cell_id"))
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+                    if s_cell != prev_cell_id:
+                        continue
+                    # Priorizamos match exacto por saved_at (múltiples muestras pueden
+                    # compartir cell_id tras dedupe). Si no hay match exacto, tomamos
+                    # el primero con ese cell_id.
+                    if sample.get("saved_at") == prev_saved_at or not matched:
+                        self._sniffer_samples_tree.selection_set(item_id)
+                        self._sniffer_sample_selection = dict(sample)
+                        matched = True
+                        if sample.get("saved_at") == prev_saved_at:
+                            break
+                if not matched:
+                    self._sniffer_sample_selection = None
 
         lines = []
         for item in bot.get_recent_sniffer_events()[-60:]:
@@ -5082,35 +6685,42 @@ class App(tk.Tk):
         sniffer_row.pack(fill="x", pady=(2, 6))
         self._sniffer_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("sniffer_enabled", False)))
         tk.Checkbutton(sniffer_row, text="Sniffer activo", variable=self._sniffer_var, bg=BG,
-                       activebackground=BG, fg=GREEN, selectcolor=BG,
-                       font=("Segoe UI", 9), command=self._save_sniffer_setting).pack(side="left")
-        self._lbl_sniffer_status = tk.Label(sniffer_row, text="inactivo", bg=BG, fg=SUBTEXT,
-                                            font=("Segoe UI", 8, "bold"))
-        self._lbl_sniffer_status.pack(side="left", padx=(4, 0))
-        tk.Button(sniffer_row, text="Simular Descarga Banco", bg=BLUE, fg=BG,
-                  font=("Segoe UI", 7, "bold"), relief="flat", padx=6, pady=1,
-                  cursor="hand2", command=self._simulate_unload).pack(side="right", padx=(0, 10))
+                       activebackground=BG, fg=TEXT_PRIMARY, selectcolor=BG_ELEVATED,
+                       font=FONT_BODY, command=self._save_sniffer_setting).pack(side="left")
+        self._lbl_sniffer_status = tk.Label(sniffer_row, text="inactivo", bg=BG, fg=TEXT_TERTIARY,
+                                            font=FONT_CAPTION)
+        self._lbl_sniffer_status.pack(side="left", padx=(SP_2, 0))
 
         unload_row = tk.Frame(runtime_body, bg=BG)
-        unload_row.pack(fill="x", pady=(0, 6))
+        unload_row.pack(fill="x", pady=(0, SP_1))
         self._enable_bank_unload_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("enable_bank_unload", False)))
-        tk.Checkbutton(unload_row, text="Habilitar descarga en banco", variable=self._enable_bank_unload_var, bg=BG,
-                       activebackground=BG, fg=GREEN, selectcolor=BG,
-                       font=("Segoe UI", 9), command=self._save_bank_unload_setting).pack(side="left")
+        tk.Checkbutton(unload_row, text="Habilitar descarga en banco",
+                       variable=self._enable_bank_unload_var, bg=BG,
+                       activebackground=BG, fg=TEXT_PRIMARY, selectcolor=BG_ELEVATED,
+                       font=FONT_BODY, command=self._save_bank_unload_setting).pack(side="left")
 
         manual_row = tk.Frame(runtime_body, bg=BG)
-        manual_row.pack(fill="x", pady=(0, 6))
+        manual_row.pack(fill="x", pady=(0, SP_1))
         self._combat_manual_mode_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("combat_manual_mode", False)))
-        tk.Checkbutton(manual_row, text="Modo manual en combate (pausa auto-combate)", variable=self._combat_manual_mode_var, bg=BG,
-                       activebackground=BG, fg=YELLOW, selectcolor=BG,
-                       font=("Segoe UI", 9, "bold"), command=self._save_combat_manual_mode_setting).pack(side="left")
+        tk.Checkbutton(manual_row, text="Modo manual en combate (pausa auto-combate)",
+                       variable=self._combat_manual_mode_var, bg=BG,
+                       activebackground=BG, fg=TEXT_PRIMARY, selectcolor=BG_ELEVATED,
+                       font=FONT_BODY, command=self._save_combat_manual_mode_setting).pack(side="left")
+
+        telemetry_row = tk.Frame(runtime_body, bg=BG)
+        telemetry_row.pack(fill="x", pady=(0, SP_1))
+        self._combat_telemetry_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("combat_telemetry", False)))
+        tk.Checkbutton(telemetry_row, text="Telemetria de combate (logs/combat-*.jsonl)",
+                       variable=self._combat_telemetry_var, bg=BG, activebackground=BG,
+                       fg=TEXT_PRIMARY, selectcolor=BG_ELEVATED, font=FONT_BODY,
+                       command=self._save_combat_telemetry_setting).pack(side="left")
 
         # Selector de perfil de combate
         combat_header, combat_body = self._collapsible_section(parent, "Combate", start_collapsed=False)
         profile_row = tk.Frame(combat_body, bg=BG)
-        profile_row.pack(fill="x", pady=(4, 6))
-        tk.Label(profile_row, text="Perfil de combate:", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
+        profile_row.pack(fill="x", pady=(SP_1, SP_1))
+        tk.Label(profile_row, text="Perfil:", bg=BG, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
 
         from combat import list_profiles
         profiles = list_profiles()
@@ -5118,24 +6728,25 @@ class App(tk.Tk):
         self._combat_profile_var = tk.StringVar(value=current_profile)
         profile_cb = ttk.Combobox(profile_row, textvariable=self._combat_profile_var,
                                    values=profiles, state="readonly", width=16,
-                                   font=("Segoe UI", 9))
-        profile_cb.pack(side="left", padx=(8, 0))
+                                   style="Pro.TCombobox")
+        profile_cb.pack(side="left", padx=(SP_2, 0))
         profile_cb.bind("<<ComboboxSelected>>", lambda e: self._on_profile_changed())
 
         ready_row = tk.Frame(combat_body, bg=BG)
-        ready_row.pack(fill="x", pady=(0, 6))
-        tk.Label(ready_row, text="Tiempo tras posicionarse (s):", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 9)).pack(side="left")
+        ready_row.pack(fill="x", pady=(0, SP_1))
+        tk.Label(ready_row, text="Tiempo tras posicionarse (s):", bg=BG, fg=TEXT_SECONDARY,
+                 font=FONT_BODY).pack(side="left")
         initial_ready = self.config_data["bot"].get("combat_placement_settle_delay", 0.12)
         self._combat_placement_settle_var = tk.StringVar(value=str(float(initial_ready)))
         tk.Entry(ready_row, textvariable=self._combat_placement_settle_var, width=8,
-                 bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat",
-                 font=("Segoe UI", 9)).pack(side="left", padx=(8, 6))
-        tk.Button(ready_row, text="Guardar", bg=GREEN, fg=BG,
-                  font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2,
-                  cursor="hand2", command=self._save_combat_timing).pack(side="left")
+                 bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=BRAND, relief="flat",
+                 highlightthickness=1, highlightbackground=BORDER_DEFAULT,
+                 highlightcolor=BRAND, font=FONT_MONO).pack(side="left", padx=(SP_2, SP_1))
+        self._make_pill_button(ready_row, "Guardar", command=self._save_combat_timing,
+                               variant="success", size="sm").pack(side="left")
         tk.Label(combat_body, text="Espera extra antes de marcar listo tras auto-posicionarse al iniciar combate.",
-                 bg=BG, fg=SUBTEXT, font=("Segoe UI", 8), wraplength=420, justify="left").pack(anchor="w", pady=(0, 6))
+                 bg=BG, fg=TEXT_TERTIARY, font=FONT_CAPTION,
+                 wraplength=420, justify="left").pack(anchor="w", pady=(0, SP_1))
 
         bot_cfg = self.config_data.get("bot", {})
         self._combat_poll_min_var = tk.StringVar(value=str(bot_cfg.get("combat_poll_interval_min", 1.0)))
@@ -5149,32 +6760,42 @@ class App(tk.Tk):
 
         def _add_timing_fields():
             timing_container = tk.Frame(combat_body, bg=BG)
-            timing_container.pack(fill="x", pady=(6, 6))
-            tk.Label(timing_container, text="Velocidad de combate (min - max s):", bg=BG, fg=YELLOW, font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 4))
-            
+            timing_container.pack(fill="x", pady=(SP_2, SP_2))
+            tk.Label(timing_container, text="Velocidad de combate (min–max s)",
+                     bg=BG, fg=TEXT_SECONDARY, font=FONT_LABEL).pack(anchor="w", pady=(0, SP_1))
+
             pairs = [
-                ("Poll sniffer:", self._combat_poll_min_var, self._combat_poll_max_var),
-                ("Delay select spell:", self._combat_spell_select_min_var, self._combat_spell_select_max_var),
-                ("Delay post click:", self._combat_post_click_min_var, self._combat_post_click_max_var),
-                ("Cooldown fin turno:", self._combat_cooldown_min_var, self._combat_cooldown_max_var),
+                ("Poll sniffer", self._combat_poll_min_var, self._combat_poll_max_var),
+                ("Delay select spell", self._combat_spell_select_min_var, self._combat_spell_select_max_var),
+                ("Delay post click", self._combat_post_click_min_var, self._combat_post_click_max_var),
+                ("Cooldown fin turno", self._combat_cooldown_min_var, self._combat_cooldown_max_var),
             ]
             for label, vmin, vmax in pairs:
                 row = tk.Frame(timing_container, bg=BG)
                 row.pack(fill="x", pady=1)
-                tk.Label(row, text=label, bg=BG, fg=SUBTEXT, font=("Segoe UI", 8), width=18, anchor="w").pack(side="left")
-                tk.Entry(row, textvariable=vmin, width=5, bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(0, 4))
-                tk.Label(row, text="-", bg=BG, fg=SUBTEXT, font=("Segoe UI", 8)).pack(side="left")
-                tk.Entry(row, textvariable=vmax, width=5, bg=PANEL, fg=TEXT, insertbackground=BLUE, relief="flat", font=("Consolas", 8)).pack(side="left", padx=(4, 6))
+                tk.Label(row, text=label, bg=BG, fg=TEXT_TERTIARY, font=FONT_CAPTION,
+                         width=18, anchor="w").pack(side="left")
+                tk.Entry(row, textvariable=vmin, width=5, bg=BG_ELEVATED, fg=TEXT_PRIMARY,
+                         insertbackground=BRAND, relief="flat",
+                         highlightthickness=1, highlightbackground=BORDER_DEFAULT,
+                         highlightcolor=BRAND, font=FONT_MONO_SMALL).pack(side="left", padx=(0, SP_1))
+                tk.Label(row, text="–", bg=BG, fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(side="left")
+                tk.Entry(row, textvariable=vmax, width=5, bg=BG_ELEVATED, fg=TEXT_PRIMARY,
+                         insertbackground=BRAND, relief="flat",
+                         highlightthickness=1, highlightbackground=BORDER_DEFAULT,
+                         highlightcolor=BRAND, font=FONT_MONO_SMALL).pack(side="left", padx=(SP_1, SP_2))
 
             btn_row = tk.Frame(timing_container, bg=BG)
-            btn_row.pack(fill="x", pady=(4, 0))
-            tk.Button(btn_row, text="Guardar tiempos", bg=GREEN, fg=BG, font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2, cursor="hand2", command=self._save_combat_speed_timing).pack(side="left")
-        
+            btn_row.pack(fill="x", pady=(SP_1, 0))
+            self._make_pill_button(btn_row, "Guardar tiempos",
+                                   command=self._save_combat_speed_timing,
+                                   variant="success", size="sm").pack(side="left")
+
         _add_timing_fields()
 
         players_header, players_body = self._collapsible_section(parent, "Players", start_collapsed=False)
         follow_row = tk.Frame(players_body, bg=BG)
-        follow_row.pack(fill="x", pady=(0, 6))
+        follow_row.pack(fill="x", pady=(0, SP_1))
         leveling_cfg = self.config_data.setdefault("leveling", {})
         self._follow_players_var = tk.BooleanVar(value=bool(leveling_cfg.get("follow_players_enabled", False)))
         self._follow_players_count_var = tk.StringVar(value="IDs guardados: 0")
@@ -5184,18 +6805,18 @@ class App(tk.Tk):
             variable=self._follow_players_var,
             bg=BG,
             activebackground=BG,
-            fg=GREEN,
-            selectcolor=BG,
-            font=("Segoe UI", 9),
+            fg=TEXT_PRIMARY,
+            selectcolor=BG_ELEVATED,
+            font=FONT_BODY,
             command=self._save_follow_players_setting,
         ).pack(side="left")
-        tk.Label(follow_row, textvariable=self._follow_players_count_var, bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8, "bold")).pack(side="left", padx=(10, 0))
+        tk.Label(follow_row, textvariable=self._follow_players_count_var, bg=BG,
+                 fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(side="left", padx=(SP_3, 0))
 
         follow_detail_row = tk.Frame(players_body, bg=BG)
-        follow_detail_row.pack(fill="x", pady=(0, 6))
-        tk.Label(follow_detail_row, text="Player guardado:", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left")
+        follow_detail_row.pack(fill="x", pady=(0, SP_1))
+        tk.Label(follow_detail_row, text="Player guardado:", bg=BG,
+                 fg=TEXT_SECONDARY, font=FONT_CAPTION).pack(side="left")
         self._follow_player_selected_var = tk.StringVar(value="")
         self._follow_player_combo = ttk.Combobox(
             follow_detail_row,
@@ -5203,8 +6824,9 @@ class App(tk.Tk):
             state="readonly",
             width=28,
             values=[],
+            style="Pro.TCombobox",
         )
-        self._follow_player_combo.pack(side="left", padx=(6, 6))
+        self._follow_player_combo.pack(side="left", padx=(SP_2, SP_2))
         self._follow_player_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_follow_player_selected())
         self._follow_player_enabled_var = tk.BooleanVar(value=False)
         tk.Checkbutton(
@@ -5213,22 +6835,22 @@ class App(tk.Tk):
             variable=self._follow_player_enabled_var,
             bg=BG,
             activebackground=BG,
-            fg=GREEN,
-            selectcolor=BG,
-            font=("Segoe UI", 8, "bold"),
+            fg=TEXT_PRIMARY,
+            selectcolor=BG_ELEVATED,
+            font=FONT_CAPTION,
             command=self._save_selected_follow_player_enabled,
         ).pack(side="left")
         self._follow_player_status_var = tk.StringVar(value="")
-        tk.Label(follow_detail_row, textvariable=self._follow_player_status_var, bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
+        tk.Label(follow_detail_row, textvariable=self._follow_player_status_var, bg=BG,
+                 fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(side="left", padx=(SP_2, 0))
         self._refresh_follow_player_controls()
 
         join_fight_row = tk.Frame(players_body, bg=BG)
-        join_fight_row.pack(fill="x", pady=(0, 6))
-        tk.Label(join_fight_row, text="Unirse a peleas de:", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(anchor="w")
+        join_fight_row.pack(fill="x", pady=(0, SP_1))
+        tk.Label(join_fight_row, text="Unirse a peleas de:", bg=BG,
+                 fg=TEXT_SECONDARY, font=FONT_CAPTION).pack(anchor="w")
         join_fight_form = tk.Frame(join_fight_row, bg=BG)
-        join_fight_form.pack(fill="x", pady=(4, 0))
+        join_fight_form.pack(fill="x", pady=(SP_1, 0))
         self._join_external_fight_actor_var = tk.StringVar(value="")
         self._join_external_fight_actor_combo = ttk.Combobox(
             join_fight_form,
@@ -5236,8 +6858,9 @@ class App(tk.Tk):
             state="readonly",
             width=28,
             values=[],
+            style="Pro.TCombobox",
         )
-        self._join_external_fight_actor_combo.pack(side="left", padx=(0, 6), fill="x", expand=True)
+        self._join_external_fight_actor_combo.pack(side="left", padx=(0, SP_2), fill="x", expand=True)
         self._join_external_fight_actor_combo.bind("<<ComboboxSelected>>", lambda _e: self._save_external_fight_join_settings())
         leveling_cfg = self.config_data.setdefault("leveling", {})
         self._join_external_fight_any_var = tk.BooleanVar(
@@ -5249,19 +6872,19 @@ class App(tk.Tk):
             variable=self._join_external_fight_any_var,
             bg=BG,
             activebackground=BG,
-            fg=GREEN,
-            selectcolor=BG,
-            font=("Segoe UI", 8, "bold"),
+            fg=TEXT_PRIMARY,
+            selectcolor=BG_ELEVATED,
+            font=FONT_CAPTION,
             command=self._save_external_fight_join_settings,
-        ).pack(side="left", padx=(6, 0))
+        ).pack(side="left", padx=(SP_2, 0))
         self._join_external_fight_status_var = tk.StringVar(value="")
-        tk.Label(players_body, textvariable=self._join_external_fight_status_var, bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).pack(anchor="w", pady=(0, 6))
+        tk.Label(players_body, textvariable=self._join_external_fight_status_var, bg=BG,
+                 fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(anchor="w", pady=(0, SP_1))
         self._refresh_external_fight_join_controls()
 
         conditions_header, conditions_body = self._collapsible_section(parent, "Condiciones del combate", start_collapsed=False)
         conditions_row = tk.Frame(conditions_body, bg=BG)
-        conditions_row.pack(fill="x", pady=(0, 6))
+        conditions_row.pack(fill="x", pady=(0, SP_1))
         self._ignore_single_mob_groups_var = tk.BooleanVar(
             value=bool(leveling_cfg.get("ignore_single_mob_groups", False))
         )
@@ -5271,10 +6894,27 @@ class App(tk.Tk):
             variable=self._ignore_single_mob_groups_var,
             bg=BG,
             activebackground=BG,
-            fg=YELLOW,
-            selectcolor=BG,
-            font=("Segoe UI", 8, "bold"),
+            fg=TEXT_PRIMARY,
+            selectcolor=BG_ELEVATED,
+            font=FONT_BODY,
             command=self._save_ignore_single_mob_groups,
+        ).pack(side="left")
+
+        lvl_ratas_row = tk.Frame(conditions_body, bg=BG)
+        lvl_ratas_row.pack(fill="x", pady=(0, SP_1))
+        self._lvl_ratas_var = tk.BooleanVar(
+            value=bool(leveling_cfg.get("lvl_ratas_mode", False))
+        )
+        tk.Checkbutton(
+            lvl_ratas_row,
+            text="Lvl ratas  (map 6367 → posicionarse en celda 313)",
+            variable=self._lvl_ratas_var,
+            bg=BG,
+            activebackground=BG,
+            fg=TEXT_PRIMARY,
+            selectcolor=BG_ELEVATED,
+            font=FONT_BODY,
+            command=self._save_lvl_ratas_mode,
         ).pack(side="left")
 
         # Fila de configuracion especifica por perfil
@@ -5283,27 +6923,9 @@ class App(tk.Tk):
         self._build_profile_extra()
 
     def _build_status(self, parent):
-        # Barra de estado estilo v2: border-top + PANEL bg
-        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x")
-        row = tk.Frame(parent, bg=PANEL, pady=5)
-        row.pack(fill="x")
-        self._status_frame = row
-        # Dot de estado + texto
-        self._status_dot_lbl = tk.Label(row, text="●", bg=PANEL, fg=RED,
-                                        font=("Segoe UI", 8))
-        self._status_dot_lbl.pack(side="left", padx=(12, 3))
-        self.lbl_status = tk.Label(row, text="Detenido", bg=PANEL, fg=SUBTEXT,
-                                   font=("Segoe UI", 9, "bold"))
-        self.lbl_status.pack(side="left")
-        self.lbl_pods = tk.Label(row, text="", bg=PANEL, fg=DIM,
-                                 font=("Segoe UI", 9))
-        self.lbl_pods.pack(side="left", padx=(12, 0))
-        # Versión a la derecha (estilo v2)
-        tk.Label(row, text="v1.0", bg=PANEL, fg=DIM,
-                 font=("Segoe UI", 9)).pack(side="right", padx=12)
-        self.lbl_count = tk.Label(row, text="Cosechados: 0", bg=PANEL, fg=DIM,
-                                  font=("Segoe UI", 9))
-        self.lbl_count.pack(side="right", padx=(0, 12))
+        # Deprecated: la barra inferior se eliminó. Se deja como no-op para
+        # mantener compatibilidad con cualquier caller externo.
+        return
 
     def _build_log(self, parent):
         """Construye el panel de log. Siempre fill=both, expand=True."""
@@ -5435,11 +7057,7 @@ class App(tk.Tk):
         self.config_data = load_config()
         self._sync_runtime_bot_config()
         print(f"[GUI] Tiempo de cosecha {profession}: {wait:.1f}s guardado")
-        # Feedback visual
-        if self._wait_saved_lbl and self._wait_saved_lbl.winfo_exists():
-            self._wait_saved_lbl.config(text=f"✓ {wait:.1f}s guardado")
-            self.after(2000, lambda: self._wait_saved_lbl.config(text="")
-                       if self._wait_saved_lbl and self._wait_saved_lbl.winfo_exists() else None)
+        self._flash_saved(self._wait_saved_lbl, text=f"✓ {wait:.1f}s guardado")
 
     def _new_profession_from_nodes(self):
         """Crear nueva profesion desde el editor de nodos (refleja en ambas secciones)."""
@@ -5694,10 +7312,8 @@ class App(tk.Tk):
             payload = normalized[saved_actor]
             state = "ON" if payload.get("enabled", True) else "OFF"
             self._join_external_fight_actor_var.set(f"{saved_actor} | {payload.get('name', '')} | {state}")
-        elif values:
-            self._join_external_fight_actor_var.set(values[0])
-            saved_actor = self._selected_external_fight_actor_from_combo() or ""
         else:
+            # No auto-seleccionar: dejar vacío para que el usuario elija explícitamente
             self._join_external_fight_actor_var.set("")
             saved_actor = ""
         any_enabled = bool(leveling_cfg.get("join_external_fights_any", False))
@@ -5986,12 +7602,13 @@ class App(tk.Tk):
             return
         self._update_resources()
         config = load_config()
-        self.bot_thread = BotThread(config, self.log_queue, test_mode=test_mode)
+        self.bot_thread = BotThread(config, self.log_queue, test_mode=test_mode, gui_root=self)
         self.bot_thread.start()
-        self.btn_toggle.config(text="■  CORRIENDO", bg=GREEN, fg="#0a1a0f",
-                               highlightbackground=GREEN)
-        self.btn_test.config(state="disabled")
-        self.btn_pause.config(state="normal")
+        # Cambiar a variant "success" + label "DETENER" (el toggle pasa a stop al estar corriendo)
+        self.btn_toggle.config(text="■  CORRIENDO")
+        self._set_pill_state(self.btn_toggle, enabled=True, variant="success")
+        self._set_pill_state(self.btn_test, enabled=False)
+        self._set_pill_state(self.btn_pause, enabled=True, variant="warning")
         self._set_bot_status("TEST" if test_mode else "Corriendo",
                              BLUE if test_mode else GREEN)
 
@@ -6002,10 +7619,11 @@ class App(tk.Tk):
     def _stop_bot(self):
         if self.bot_thread:
             self.bot_thread.stop()
-        self.btn_toggle.config(text="▶  INICIAR", bg=ACCENT, fg="white",
-                               highlightbackground=BLUE)
-        self.btn_test.config(state="normal")
-        self.btn_pause.config(state="disabled", text="⏸  PAUSAR")
+        self.btn_toggle.config(text="▶  INICIAR")
+        self._set_pill_state(self.btn_toggle, enabled=True, variant="primary")
+        self._set_pill_state(self.btn_test, enabled=True, variant="ghost")
+        self.btn_pause.config(text="⏸  PAUSAR")
+        self._set_pill_state(self.btn_pause, enabled=False, variant="secondary")
         self._set_bot_status("Detenido", RED)
 
     def _simulate_unload(self):
@@ -6023,7 +7641,10 @@ class App(tk.Tk):
                     self._append_log(data)
                     if "Cosechados:" in data:
                         total = data.split("Cosechados:")[-1].strip()
-                        self.lbl_count.config(text=f"Cosechados: {total}")
+                        try:
+                            self._harvested_count = int(total.split()[0])
+                        except (ValueError, IndexError):
+                            pass
                     if "[MOBS_ACTIVATED]" in data or "[TELEPORT] Ruta" in data or "[UNLOAD] Pócima" in data:
                         self.config_data = load_config()
                         self._sync_runtime_bot_config()
@@ -6037,9 +7658,11 @@ class App(tk.Tk):
                 elif event == "paused":
                     if data:
                         self.btn_pause.config(text="▶  REANUDAR")
+                        self._set_pill_state(self.btn_pause, enabled=True, variant="primary")
                         self._set_bot_status("Pausado", YELLOW)
                     else:
                         self.btn_pause.config(text="⏸  PAUSAR")
+                        self._set_pill_state(self.btn_pause, enabled=True, variant="warning")
                         self._set_bot_status("Corriendo", GREEN)
                 elif event == "scan_mobs_empty":
                     self.log_queue.put(("log", "[MOBS] Todos los mobs quedaron desactivados"))
@@ -6047,15 +7670,20 @@ class App(tk.Tk):
                 elif event == "stopped":
                     self.bot_thread = None
                     self._stop_bot()
+                elif event == "map_deformation_alert":
+                    self._handle_map_deformation_alert(data or {})
         except queue.Empty:
             pass
 
-        # Actualizar label de pods
-        if hasattr(self, "lbl_pods") and self.bot_thread and self.bot_thread.bot:
+        # Los labels de pods/count viven ahora en el header meta.
+        if self.bot_thread and self.bot_thread.bot:
             bot = self.bot_thread.bot
-            p_curr = bot.current_pods if bot.current_pods is not None else "?"
-            p_max = bot.max_pods if bot.max_pods is not None else "?"
-            self.lbl_pods.config(text=f"PODS: {p_curr} / {p_max}")
+            p_curr = bot.current_pods if bot.current_pods is not None else None
+            p_max = bot.max_pods if bot.max_pods is not None else None
+            if p_curr is not None and p_max is not None:
+                self._pods_label = f"pods {p_curr}/{p_max}"
+            else:
+                self._pods_label = ""
 
         # Actualizar label de estado del sniffer
         if hasattr(self, "_lbl_sniffer_status"):
@@ -6093,6 +7721,285 @@ class App(tk.Tk):
                 pass
 
         self.after(40, self._poll_queue)
+
+    # ─────────────── Map deformation alert + calibración manual ───────────────
+
+    def _handle_map_deformation_alert(self, payload: dict) -> None:
+        map_id = payload.get("map_id")
+        score = payload.get("score", 0.0)
+        gls = payload.get("ground_levels", {})
+        slopes = payload.get("slope_summary", {})
+        reason = payload.get("reason", "")
+        self._deformation_banner_payload = payload
+        msg = (
+            f"Mapa {map_id} con deformación grande (score={score}). "
+            f"Bot pausado. Niveles={gls} · Slopes={slopes}. {reason}"
+        )
+        self._deformation_banner_text.set(msg)
+        # Mostrar banner debajo del header (antes del notebook)
+        self._deformation_banner.pack(fill="x", before=self._notebook)
+        # Auto-pausar el bot
+        if self.bot_thread is not None and not self.bot_thread._paused:
+            self.bot_thread.pause()
+        self._append_log(f"[GUI] ALERTA: {msg}")
+
+    def _dismiss_map_deformation_banner(self) -> None:
+        self._deformation_banner.pack_forget()
+        self._deformation_banner_payload = None
+
+    def _open_map_calibration_dialog(self) -> None:
+        payload = self._deformation_banner_payload or {}
+        map_id = payload.get("map_id")
+        if map_id is None:
+            messagebox.showwarning(
+                "Calibración", "No hay mapa pendiente de calibrar.", parent=self
+            )
+            return
+        gls = payload.get("ground_levels", {})
+
+        bot = self.bot_thread.bot if self.bot_thread and self.bot_thread.bot else None
+        if bot is None:
+            messagebox.showwarning(
+                "Calibración",
+                "Necesito el bot corriendo para usar las herramientas de proyección.",
+                parent=self,
+            )
+            return
+
+        # Para cada ground_level del mapa, encontrar una celda representativa (la primera caminable)
+        cells_snapshot = bot.get_current_map_cells_snapshot() if hasattr(bot, "get_current_map_cells_snapshot") else (bot._current_map_cells or [])
+        rep_cell_by_gl: dict[int, dict] = {}
+        for c in cells_snapshot:
+            try:
+                gl = int(c.get("ground_level"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if gl in rep_cell_by_gl:
+                continue
+            # Preferir celdas caminables (effective_cell_type 4 = walkable_cell)
+            ect = c.get("effective_cell_type")
+            if ect in (0, 1):
+                continue
+            rep_cell_by_gl[gl] = c
+        # Si algun gl no tuvo caminable, fallback a cualquiera
+        for c in cells_snapshot:
+            try:
+                gl = int(c.get("ground_level"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            rep_cell_by_gl.setdefault(gl, c)
+
+        win = tk.Toplevel(self)
+        win.title(f"Calibrar mapa {map_id}")
+        win.transient(self)
+        win.configure(bg=BG_BASE)
+        win.geometry("680x520")
+
+        tk.Label(
+            win, text=f"Calibración manual · mapa {map_id}",
+            bg=BG_BASE, fg=TEXT_PRIMARY, font=FONT_DISPLAY,
+        ).pack(pady=(SP_4, SP_2))
+        tk.Label(
+            win,
+            text=("Por cada ground_level, usá los botones para llevar el mouse a la "
+                  "posición proyectada por el bot, mové el mouse al centro REAL de la "
+                  "celda en el juego, y presioná 'Capturar' (3s countdown). El offset "
+                  "se calcula automáticamente."),
+            bg=BG_BASE, fg=TEXT_SECONDARY, font=FONT_CAPTION, justify="left", wraplength=640,
+        ).pack(padx=SP_4, anchor="w")
+
+        # Cargar overrides existentes
+        cfg = load_config()
+        cal = cfg.get("bot", {}).get("combat_calibration", {}) or {}
+        manual = cal.get("manual_overrides_by_map_id") or {}
+        existing = manual.get(str(map_id)) or manual.get(map_id) or {}
+        existing_gl = (existing.get("ground_level_offsets") or {}) if isinstance(existing, dict) else {}
+
+        entries: dict[int, tk.Entry] = {}
+        status_vars: dict[int, tk.StringVar] = {}
+        form = tk.Frame(win, bg=BG_BASE)
+        form.pack(pady=SP_3, padx=SP_4, fill="x")
+
+        headers = ["ground_level", "celdas", "cell representativo", "ir / capturar", "offset_y (px)"]
+        for col, txt in enumerate(headers):
+            tk.Label(form, text=txt, bg=BG_BASE, fg=TEXT_SECONDARY, font=FONT_BODY_BOLD).grid(row=0, column=col, sticky="w", padx=SP_2, pady=SP_2)
+
+        def make_goto_handler(cell_id: int):
+            def _go():
+                try:
+                    pos = bot._cell_to_screen(int(cell_id))
+                    if pos is None:
+                        messagebox.showwarning("Sin proyección", f"No pude proyectar cell={cell_id}", parent=win)
+                        return
+                    pyautogui.moveTo(int(pos[0]), int(pos[1]), duration=0.15)
+                    self._append_log(f"[CALIB] Mouse llevado a cell={cell_id} -> {pos}")
+                except Exception as exc:
+                    messagebox.showerror("Error", f"moveTo falló: {exc}", parent=win)
+            return _go
+
+        def make_capture_handler(gl: int, cell_id: int, status_var: tk.StringVar, entry: tk.Entry):
+            def _capture():
+                pos_proj = bot._cell_to_screen(int(cell_id))
+                if pos_proj is None:
+                    messagebox.showwarning("Sin proyección", f"No pude proyectar cell={cell_id}", parent=win)
+                    return
+                # Bounds del monitor del juego para validar que no se capture en otra ventana
+                try:
+                    monitor = dict(bot.screen.monitor)
+                    mon_x0, mon_y0 = int(monitor["left"]), int(monitor["top"])
+                    mon_x1 = mon_x0 + int(monitor["width"])
+                    mon_y1 = mon_y0 + int(monitor["height"])
+                except Exception:
+                    mon_x0 = mon_y0 = 0
+                    mon_x1 = mon_y1 = 99999
+                status_var.set("Mové el mouse al centro REAL de la celda... (3s)")
+                def _do():
+                    for s in (3, 2, 1):
+                        self.after(0, lambda ss=s: status_var.set(f"Capturando en {ss}s... centrá el mouse en la celda"))
+                        time.sleep(1)
+                    x, y = pyautogui.position()
+                    delta_y = y - pos_proj[1]
+                    delta_x = x - pos_proj[0]
+                    in_game = (mon_x0 <= x <= mon_x1) and (mon_y0 <= y <= mon_y1)
+                    # Sanity check proporcional al ground_level: cada nivel ~25-30px típicamente.
+                    # Permitimos hasta 50px/nivel + 60px de margen. Δx no escala con gl, máx 100px.
+                    max_dy = max(150, gl * 50 + 60)
+                    too_large = abs(delta_y) > max_dy or abs(delta_x) > 100
+                    def _apply():
+                        if not in_game:
+                            messagebox.showerror(
+                                "Captura inválida",
+                                f"El mouse está FUERA de la ventana del juego ({x},{y}).\n"
+                                f"Monitor del juego: ({mon_x0},{mon_y0})-({mon_x1},{mon_y1}).\n"
+                                f"Asegurate de tener el juego en foco y mover el mouse DENTRO de él.",
+                                parent=win,
+                            )
+                            status_var.set(f"RECHAZADO: mouse fuera del juego ({x},{y})")
+                            return
+                        if too_large:
+                            if not messagebox.askyesno(
+                                "Delta sospechoso",
+                                f"Δy={delta_y:+d} Δx={delta_x:+d} parecen excesivos.\n"
+                                f"Para gl={gl} esperaríamos |Δy| ≤ {max_dy} px y |Δx| ≤ 100 px.\n"
+                                f"Si capturaste bien (mouse en el centro de la celda dentro del juego), aceptá.\n"
+                                f"Si no, cancelá y reintentá.",
+                                parent=win,
+                            ):
+                                status_var.set(f"RECHAZADO: Δy={delta_y:+d} excesivo")
+                                return
+                        entry.delete(0, "end")
+                        entry.insert(0, str(int(delta_y)))
+                        status_var.set(f"Capturado: real=({x},{y}) proj={pos_proj} Δy={delta_y:+d}px Δx={delta_x:+d}px")
+                        self._append_log(
+                            f"[CALIB] gl={gl} cell={cell_id}: proj={pos_proj} real=({x},{y}) "
+                            f"Δy={delta_y:+d} Δx={delta_x:+d}"
+                        )
+                    self.after(0, _apply)
+                threading.Thread(target=_do, daemon=True).start()
+            return _capture
+
+        for i, (gl, count) in enumerate(sorted(gls.items(), key=lambda kv: int(kv[0])), start=1):
+            gl_int = int(gl)
+            rep = rep_cell_by_gl.get(gl_int)
+            rep_cell_id = rep.get("cell_id") if rep else None
+            tk.Label(form, text=str(gl_int), bg=BG_BASE, fg=TEXT_PRIMARY, font=FONT_BODY).grid(row=i, column=0, sticky="w", padx=SP_2, pady=SP_1)
+            tk.Label(form, text=str(count), bg=BG_BASE, fg=TEXT_TERTIARY, font=FONT_BODY).grid(row=i, column=1, sticky="w", padx=SP_2, pady=SP_1)
+            tk.Label(form, text=str(rep_cell_id) if rep_cell_id is not None else "—", bg=BG_BASE, fg=TEXT_SECONDARY, font=FONT_BODY).grid(row=i, column=2, sticky="w", padx=SP_2, pady=SP_1)
+
+            actions_cell = tk.Frame(form, bg=BG_BASE)
+            actions_cell.grid(row=i, column=3, sticky="w", padx=SP_2, pady=SP_1)
+            entry = tk.Entry(form, width=10, bg=BG_ELEVATED, fg=TEXT_PRIMARY, insertbackground=TEXT_PRIMARY, relief="flat")
+            prev_val = existing_gl.get(gl_int, existing_gl.get(str(gl_int)))
+            entry.insert(0, str(int(prev_val)) if prev_val is not None else "0")
+            entry.grid(row=i, column=4, sticky="w", padx=SP_2, pady=SP_1)
+            status_var = tk.StringVar(value="")
+            status_vars[gl_int] = status_var
+
+            if rep_cell_id is not None:
+                self._make_pill_button(
+                    actions_cell, "▶ Ir", command=make_goto_handler(int(rep_cell_id)),
+                    variant="ghost", size="sm",
+                ).pack(side="left", padx=(0, SP_1))
+                self._make_pill_button(
+                    actions_cell, "● Capturar",
+                    command=make_capture_handler(gl_int, int(rep_cell_id), status_var, entry),
+                    variant="warning", size="sm",
+                ).pack(side="left")
+            entries[gl_int] = entry
+
+        # Linea de status global
+        global_status = tk.StringVar(value="")
+        tk.Label(win, textvariable=global_status, bg=BG_BASE, fg=TEXT_TERTIARY, font=FONT_CAPTION, justify="left", wraplength=640).pack(padx=SP_4, anchor="w", pady=(SP_2, 0))
+        # Combinar todos los status vars en uno
+        def _refresh_global():
+            parts = [f"gl={gl}: {v.get()}" for gl, v in status_vars.items() if v.get()]
+            global_status.set("  |  ".join(parts) if parts else "")
+            win.after(400, _refresh_global)
+        _refresh_global()
+
+        btns = tk.Frame(win, bg=BG_BASE)
+        btns.pack(side="bottom", pady=SP_4)
+
+        def on_save():
+            offsets = {}
+            try:
+                for gl, ent in entries.items():
+                    txt = ent.get().strip() or "0"
+                    offsets[int(gl)] = int(txt)
+            except ValueError:
+                messagebox.showerror("Calibración", "Los offsets deben ser enteros.", parent=win)
+                return
+            # Validación final proporcional al gl. Permitir hasta 50px/nivel + 60px margen.
+            absurd = {gl: v for gl, v in offsets.items() if abs(v) > max(150, int(gl) * 50 + 60)}
+            if absurd:
+                detail = ", ".join(f"gl={gl}: {v}px (máx {max(150, int(gl)*50+60)})" for gl, v in absurd.items())
+                if not messagebox.askyesno(
+                    "Offsets sospechosos",
+                    f"Los siguientes offsets superan el rango esperado:\n{detail}\n\n"
+                    f"Esperado: ~25-30 px por nivel de altura.\n"
+                    f"¿Guardar de todas formas?",
+                    parent=win,
+                ):
+                    return
+            self._save_map_calibration(int(map_id), offsets)
+            win.destroy()
+            self._dismiss_map_deformation_banner()
+            messagebox.showinfo(
+                "Calibración",
+                f"Mapa {map_id} calibrado. Reanudá el bot cuando estés listo.",
+                parent=self,
+            )
+
+        def on_cancel():
+            win.destroy()
+
+        self._make_pill_button(btns, "GUARDAR", command=on_save, variant="primary", size="md").pack(side="left", padx=SP_2)
+        self._make_pill_button(btns, "CANCELAR", command=on_cancel, variant="ghost", size="md").pack(side="left", padx=SP_2)
+
+    def _save_map_calibration(self, map_id: int, ground_level_offsets: dict[int, int]) -> None:
+        """Guarda override manual en config.yaml y refresca config en runtime."""
+        try:
+            import yaml
+            config_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+            bot_cfg = raw.setdefault("bot", {})
+            cal = bot_cfg.setdefault("combat_calibration", {})
+            manual = cal.setdefault("manual_overrides_by_map_id", {})
+            manual[str(map_id)] = {
+                "ground_level_offsets": {int(k): int(v) for k, v in ground_level_offsets.items()},
+            }
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+            # Recargar config en runtime
+            self.config_data = load_config()
+            self._sync_runtime_bot_config()
+            # Sync en el bot vivo si existe
+            if self.bot_thread and self.bot_thread.bot:
+                self.bot_thread.bot.config = self.config_data
+            self._append_log(f"[CALIB] Mapa {map_id} guardado: {ground_level_offsets}")
+        except Exception as e:
+            messagebox.showerror("Calibración", f"No se pudo guardar: {e}", parent=self)
 
     def _append_log(self, msg):
         self.log_text.config(state="normal")

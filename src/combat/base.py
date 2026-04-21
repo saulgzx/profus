@@ -44,7 +44,11 @@ class CombatContext:
                  move_towards_enemy=None,
                  enemy_in_melee_range=None,
                  has_line_of_sight=None,
-                 cell_distance=None):
+                 cell_distance=None,
+                 record_learned_offset=None,
+                 get_spell_jitter_offset=None,
+                 move_random_reachable=None,
+                 manual_pixel_for_cell=None):
         self.screen          = screen
         self.ui_detector     = ui_detector
         self.actions         = actions
@@ -64,6 +68,20 @@ class CombatContext:
         self.enemy_in_melee_range = enemy_in_melee_range
         self.has_line_of_sight = has_line_of_sight
         self.cell_distance = cell_distance
+        self.record_learned_offset = record_learned_offset
+        self.get_spell_jitter_offset = get_spell_jitter_offset
+        # Fallback para desbloquear sprite del PJ tapando un mob: los perfiles
+        # pueden llamarlo tras N fallos consecutivos de un spell dirigido a
+        # enemigo. Mueve el PJ a una celda aleatoria alcanzable con el PM
+        # pasado. Retorna dict con 'moved', 'combat_cell', etc.
+        self.move_random_reachable = move_random_reachable
+        # Lookup directo al pixel manual calibrado por el usuario para una
+        # (map_id, cell_id). Retorna (x, y) si hay override manual en
+        # `bot.manual_pixel_by_map_cell[<map>][<cell>]`, None si no hay.
+        # LEY ABSOLUTA — cuando hay pixel manual para la celda del PJ se usa
+        # SIN offsets (y-offset del cuerpo, jitter, learned). Rule:
+        # rule_manual_pixel_positions_law.md.
+        self.manual_pixel_for_cell = manual_pixel_for_cell
 
 
 class CombatProfile:
@@ -91,3 +109,7 @@ class CombatProfile:
         Debe retornar 'done' o 'combat_ended'.
         """
         return "done"
+
+    def on_fight_end(self) -> None:
+        """Hook invocado al recibir GE (fin de pelea). Subperfiles pueden resetear estado interno."""
+        return None

@@ -3,7 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-logs/*.log
+logs/
+gui_promax*.png
+gui_*.png
 config.local.yaml
 .env
 *.egg-info/
@@ -12,6 +14,7 @@ build/
 .idea/
 .vscode/settings.json
 .tmp_ext/
+mapas/
 *.lnk
 gui_error.log
 grid_debug_*.png
@@ -21,3 +24,5 @@ pj_card_debug.png
 pj_card_mask_debug.png
 screenshot_debug.png
 query
+backups/
+.claude/
