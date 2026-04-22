@@ -6019,6 +6019,36 @@ class App(tk.Tk):
         state = "activada" if enabled else "desactivada"
         self.log_queue.put(("log", f"[TELEMETRY] Telemetria de combate {state} (logs/combat-*.jsonl)"))
 
+    def _save_perf_enabled_setting(self):
+        enabled = bool(self._perf_enabled_var.get())
+        self.config_data.setdefault("bot", {})["perf_enabled"] = enabled
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        try:
+            from perf import configure_from_dict as _cfg_perf
+            _cfg_perf(self.config_data.get("bot", {}))
+        except Exception as exc:
+            self.log_queue.put(("log", f"[PERF] error reconfigurando: {exc!r}"))
+            return
+        state = "activada" if enabled else "desactivada"
+        self.log_queue.put(("log", f"[PERF] Medicion de latencias {state} (logs/perf-*.jsonl)"))
+
+    def _save_perf_packet_capture_setting(self):
+        enabled = bool(self._perf_packet_capture_var.get())
+        self.config_data.setdefault("bot", {})["perf_packet_capture"] = enabled
+        save_config(self.config_data)
+        self.config_data = load_config()
+        self._sync_runtime_bot_config()
+        try:
+            from perf import configure_from_dict as _cfg_perf
+            _cfg_perf(self.config_data.get("bot", {}))
+        except Exception as exc:
+            self.log_queue.put(("log", f"[PERF] error reconfigurando: {exc!r}"))
+            return
+        state = "activada" if enabled else "desactivada"
+        self.log_queue.put(("log", f"[PERF] Captura de packets {state} (logs/packets-*.jsonl)"))
+
     def _toggle_sniffer_debug(self):
         """Abre ventana con log raw de paquetes Dofus para descubrir actor_id."""
         win = tk.Toplevel(self)
@@ -6714,6 +6744,24 @@ class App(tk.Tk):
                        variable=self._combat_telemetry_var, bg=BG, activebackground=BG,
                        fg=TEXT_PRIMARY, selectcolor=BG_ELEVATED, font=FONT_BODY,
                        command=self._save_combat_telemetry_setting).pack(side="left")
+
+        # Perf measurement (opt-in): mediciones cuantitativas para análisis offline.
+        # Overhead nulo cuando ambos están en false. Ver scripts/analyze_perf.py.
+        perf_row = tk.Frame(runtime_body, bg=BG)
+        perf_row.pack(fill="x", pady=(0, SP_1))
+        self._perf_enabled_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("perf_enabled", False)))
+        tk.Checkbutton(perf_row, text="Perf: medir latencias (logs/perf-*.jsonl)",
+                       variable=self._perf_enabled_var, bg=BG, activebackground=BG,
+                       fg=TEXT_PRIMARY, selectcolor=BG_ELEVATED, font=FONT_BODY,
+                       command=self._save_perf_enabled_setting).pack(side="left")
+
+        perf_capture_row = tk.Frame(runtime_body, bg=BG)
+        perf_capture_row.pack(fill="x", pady=(0, SP_1))
+        self._perf_packet_capture_var = tk.BooleanVar(value=bool(self.config_data["bot"].get("perf_packet_capture", False)))
+        tk.Checkbutton(perf_capture_row, text="Perf: capturar packets sniffer (logs/packets-*.jsonl, ~1MB/min)",
+                       variable=self._perf_packet_capture_var, bg=BG, activebackground=BG,
+                       fg=TEXT_PRIMARY, selectcolor=BG_ELEVATED, font=FONT_BODY,
+                       command=self._save_perf_packet_capture_setting).pack(side="left")
 
         # Selector de perfil de combate
         combat_header, combat_body = self._collapsible_section(parent, "Combate", start_collapsed=False)
