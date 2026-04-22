@@ -42,10 +42,27 @@ class Actions:
 
     def quick_click(self, pos: tuple[int, int], button: str = "left"):
         """Click rapido para menus contextuales sin delay largo."""
-        x, y = self._jitter(*pos, radius=2)
-        pyautogui.moveTo(x, y, duration=random.uniform(self.quick_move_min, self.quick_move_max))
-        time.sleep(random.uniform(self.quick_click_pause_min, self.quick_click_pause_max))
-        pyautogui.click(x, y, button=button)
+        # Instrumentación perf: opt-in vía config, no-op si deshabilitado.
+        _perf_ctx = None
+        try:
+            from perf import get_perf
+            _perf_ctx = get_perf().measure("actions.quick_click",
+                                           pos_x=int(pos[0]), pos_y=int(pos[1]),
+                                           button=button)
+            _perf_ctx.__enter__()
+        except Exception:
+            _perf_ctx = None
+        try:
+            x, y = self._jitter(*pos, radius=2)
+            pyautogui.moveTo(x, y, duration=random.uniform(self.quick_move_min, self.quick_move_max))
+            time.sleep(random.uniform(self.quick_click_pause_min, self.quick_click_pause_max))
+            pyautogui.click(x, y, button=button)
+        finally:
+            if _perf_ctx is not None:
+                try:
+                    _perf_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
 
     def double_click(self, pos: tuple[int, int]):
         x, y = self._jitter(*pos)

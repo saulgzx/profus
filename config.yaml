@@ -419,6 +419,15 @@ bot:
   combat_spell_select_delay_min: 0.08
   combat_telemetry: true
   combat_telemetry_categories: []
+  # ── Mediciones de performance (opt-in) ───────────────────────────────
+  # perf_enabled         → graba spans/marks/points a logs/perf-YYYYMMDD.jsonl
+  # perf_packet_capture  → graba cada paquete del sniffer a
+  #                        logs/packets-YYYYMMDD.jsonl (fixture para replay)
+  # Ambos default false. Activar SOLO durante sesiones de profiling — la
+  # captura de packets puede generar ~1MB/min en combate intenso.
+  # Análisis offline:  python scripts/analyze_perf.py logs/perf-XXX.jsonl
+  perf_enabled: false
+  perf_packet_capture: false
   combat_turn_cooldown: 0.25
   combat_turn_cooldown_max: 0.25
   combat_turn_cooldown_min: 0.15

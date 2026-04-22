@@ -652,10 +652,35 @@ class DofusSniffer:
         if self.debug_mode:
             self.event_queue.put(("raw_packet", {"direction": direction, "data": packet}))
 
+        # ── Instrumentación perf (opcional, no-op si está deshabilitada) ──
+        # Captura timestamp de recepción ANTES del parse para medir overhead
+        # de parsing y grabar fixture de replay. Import local para evitar
+        # ciclo en tests que mocken el sniffer.
+        _perf = None
+        t_recv = None
+        try:
+            from perf import get_perf
+            _perf = get_perf()
+            if _perf.enabled or _perf.packet_capture:
+                import time as _time
+                t_recv = _time.time()
+        except Exception:
+            _perf = None
+
         if from_server:
             self._parse_server_packet(packet)
         else:
             self._parse_client_packet(packet)
+
+        if _perf is not None and (_perf.enabled or _perf.packet_capture):
+            try:
+                import time as _time
+                t_parsed = _time.time()
+                if _perf.packet_capture:
+                    _perf.record_packet(direction, packet,
+                                        t_recv=t_recv, t_parsed=t_parsed)
+            except Exception:
+                pass
 
         # Despertar al loop del bot: cualquier paquete protocolo completo de
         # Dofus puede traer eventos accionables (turn_start, game_action,

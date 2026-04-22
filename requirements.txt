@@ -6,3 +6,7 @@ pynput>=1.7.6
 numpy>=1.24.0
 pyyaml>=6.0
 scapy>=2.5.0
+
+# Testing & análisis (opcional para runtime, requerido para CI/dev)
+pytest>=7.4
+pytest-mock>=3.12

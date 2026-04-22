@@ -16,6 +16,7 @@ from grid_detector import IsoGridDetector
 from map_logic import cell_id_to_grid, cell_id_to_col_row
 from dofus_map_data import decode_map_data, load_map_data_from_xml
 from telemetry import get_telemetry, configure_from_dict as configure_telemetry
+from perf import get_perf, configure_from_dict as configure_perf
 
 MENU_TIMEOUT    = 4.0   # segundos esperando que aparezca Segar tras click
 SPAM_INTERVAL   = 0.3   # segundos entre chequeos de Segar durante spam
@@ -236,6 +237,12 @@ class Bot:
             configure_telemetry(config.get("bot", {}))
         except Exception as exc:
             print(f"[BOT] No se pudo configurar telemetria: {exc!r}")
+        # Medición de rendimiento (opt-in via config.bot.perf_enabled y
+        # config.bot.perf_packet_capture). Overhead nulo si está deshabilitado.
+        try:
+            configure_perf(config.get("bot", {}))
+        except Exception as exc:
+            print(f"[BOT] No se pudo configurar perf: {exc!r}")
         self._sniffer_fight_id: str | None = None
 
         if config["bot"].get("sniffer_enabled", False):
@@ -4225,6 +4232,28 @@ class Bot:
             return frame
         self._placement_auto_attempted = True
 
+        # Perf: medir duración total del placement (desde entrar hasta salir,
+        # incluyendo todos los reintentos y fallbacks). Overhead nulo si
+        # perf_enabled=False en config.
+        _perf_span = None
+        try:
+            _perf_span = get_perf().measure(
+                "placement.auto_place_total",
+                map_id=self._current_map_id,
+            )
+            _perf_span.__enter__()
+        except Exception:
+            _perf_span = None
+        try:
+            return self._auto_place_before_ready_impl(frame)
+        finally:
+            if _perf_span is not None:
+                try:
+                    _perf_span.__exit__(None, None, None)
+                except Exception:
+                    pass
+
+    def _auto_place_before_ready_impl(self, frame: np.ndarray) -> np.ndarray:
         self.screen.focus_window()
         wait_per_attempt = float(self.config["bot"].get("combat_placement_move_wait", 1.0) or 1.0)
         default_offsets = [
@@ -4407,8 +4436,21 @@ class Bot:
                     if self._sniffer_fight_ended or not self._sniffer_in_placement:
                         break
                     print(f"[COMBAT] Placement reintento #{attempt_idx} con offset=({dx_offset:+d},{dy_offset:+d}) -> pos={click_pos}")
+                # Perf: medir latencia click→confirm por cada intento individual.
+                _perf_mark_id = None
+                try:
+                    _perf_mark_id = get_perf().mark(
+                        "placement.click_to_confirm",
+                        map_id=map_id, target_cell=int(target_cell),
+                        attempt=attempt_idx,
+                        has_manual_pixel=manual_target_pixel is not None,
+                        pos_x=int(click_pos[0]), pos_y=int(click_pos[1]),
+                    )
+                except Exception:
+                    _perf_mark_id = None
                 self.actions.quick_click(click_pos)
                 wait_deadline = time.time() + wait_per_attempt
+                _poll_count = 0
                 while time.time() < wait_deadline:
                     if self.sniffer_active:
                         self._drain_sniff_queue()
@@ -4416,7 +4458,20 @@ class Bot:
                         break
                     if self._combat_cell is not None and self._combat_cell != prev_cell:
                         break
+                    _poll_count += 1
                     time.sleep(0.05)
+                _click_resolved_to = int(self._combat_cell) if self._combat_cell is not None else None
+                _click_ok = (_click_resolved_to == target_cell)
+                try:
+                    get_perf().mark_end(
+                        _perf_mark_id,
+                        result="ok" if _click_ok else ("miss" if _click_resolved_to != prev_cell else "no_move"),
+                        landed_cell=_click_resolved_to,
+                        poll_count=_poll_count,
+                        fight_ended=bool(self._sniffer_fight_ended),
+                    )
+                except Exception:
+                    pass
                 if self._sniffer_fight_ended or not self._sniffer_in_placement:
                     break
                 if self._combat_cell == target_cell:
