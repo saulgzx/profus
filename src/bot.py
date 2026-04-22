@@ -4666,6 +4666,31 @@ class Bot:
         except Exception as exc:
             print(f"[COMBAT] sprite-collision check falló: {exc}")
 
+        # ── Guardia pre-click: verificar que target_cell no esté ocupado por un enemigo
+        # justo antes de empezar a clickear. Si la celda quedó ocupada entre el momento
+        # en que _choose_approach_cell_near_target la eligió y ahora (race condition típica
+        # en map 2881 cell 152), abortar en vez de hacer 15 clicks inútiles sobre el enemigo.
+        if target_cell in set(self._get_enemy_fighter_cells()):
+            print(
+                f"[COMBAT] Movimiento ABORTADO: target_cell={target_cell} está ahora ocupada por "
+                f"un enemigo (race condition). No se malgastan clicks. cell actual={old_cell}."
+            )
+            return {
+                "attempted_move": False,
+                "moved": False,
+                "moved_to_target": False,
+                "movement_failed": True,
+                "movement_aborted_occupied": True,
+                "target_cell": target_cell,
+                "target_pos": target_pos,
+                "combat_cell": old_cell,
+                "self_screen_pos": self._movement_click_pos_for_cell(old_cell) if old_cell is not None else None,
+                "fight_ended": self._sniffer_fight_ended,
+                "turn_ready": self._sniffer_turn_ready,
+                "current_pa": self._sniffer_pa,
+                "current_mp": self._sniffer_pm,
+            }
+
         moved_to_target = False
         moved_other = False
         current_cell = self._combat_cell
@@ -4734,7 +4759,15 @@ class Bot:
                 except Exception:
                     pass
                 break
-            # No movió: reintentar con siguiente offset
+            # No movió: antes de reintentar, verificar si la celda quedó ocupada
+            # (sniffer actualizó posición del enemigo durante la espera).
+            if target_cell in set(self._get_enemy_fighter_cells()):
+                print(
+                    f"[COMBAT] Movimiento ABORTADO en intento {attempt}: "
+                    f"target_cell={target_cell} pasó a estar ocupada (sniffer actualizado). "
+                    f"Deteniendo reintentos."
+                )
+                break
             print(f"[COMBAT] Sin movimiento tras click attempt={attempt}. Probando siguiente offset.")
 
         moved = current_cell is not None and current_cell != old_cell
