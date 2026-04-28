@@ -158,7 +158,77 @@ def test_parse_gtm_empty_returns_empty():
     assert sn._parse_gtm("|") == []
 
 
+def test_parse_gtm_short_form_is_dead():
+    # Formato corto `actor_id;1` = fighter muerto. Confirmado con 7200
+    # ocurrencias en log real del 2026-04-23. Antes del fix, este entry
+    # tenía hp=None y no marcaba al fighter como muerto; ahora emite
+    # hp=0 y dead=True para que el bot actualice alive=False.
+    raw = "-3;1"
+    entries = sn._parse_gtm(raw)
+    assert len(entries) == 1
+    e = entries[0]
+    assert e["actor_id"] == "-3"
+    assert e["dead"] is True
+    assert e["hp"] == 0
+
+
+def test_parse_gtm_mixed_alive_and_dead():
+    # Extracto real del log: 3 vivos + 4 muertos en el mismo paquete.
+    raw = "-1;1|22240;0;1600;0;0;169;;1600|-2;0;46;6;4;125;;308|-3;1|-4;0;121;5;3;184;;498|-5;0;84;5;4;155;;84|-6;1|-7;1"
+    entries = sn._parse_gtm(raw)
+    by_id = {e["actor_id"]: e for e in entries}
+    # Dead (forma corta ';1')
+    for dead_id in ("-1", "-3", "-6", "-7"):
+        assert by_id[dead_id]["dead"] is True, f"{dead_id} debería ser dead=True"
+        assert by_id[dead_id]["hp"] == 0
+    # Vivos (forma larga)
+    assert by_id["22240"]["dead"] is False
+    assert by_id["22240"]["hp"] == 1600
+    assert by_id["-2"]["dead"] is False
+    assert by_id["-2"]["hp"] == 308
+    assert by_id["-4"]["hp"] == 498
+    assert by_id["-5"]["hp"] == 84
+
+
 # ────────────────────────────────────────── spell cooldown ──
+
+def test_gaf_packet_emits_game_action_finish():
+    """GAF{seq}|{actor_id} → game_action_finish event.
+
+    Crítico para saber cuándo termina la animación de walk antes de
+    disparar el próximo hotkey. Medido 2026-04-23: move→GAF p50=235ms.
+    """
+    class FakeQueue:
+        def __init__(self): self.events = []
+        def put(self, e): self.events.append(e)
+
+    s = sn.DofusSniffer.__new__(sn.DofusSniffer)
+    s.event_queue = FakeQueue()
+    s.my_actor_id = "22240"
+    s._candidate_actor_id = None
+
+    s._parse_server_packet("GAF2|22240")
+    assert len(s.event_queue.events) == 1
+    kind, data = s.event_queue.events[0]
+    assert kind == "game_action_finish"
+    assert data["actor_id"] == "22240"
+    assert data["seq_id"] == "2"
+
+
+def test_gas_packet_is_dropped():
+    """GAS{actor_id} se dropea para no contaminar el handler genérico de GA."""
+    class FakeQueue:
+        def __init__(self): self.events = []
+        def put(self, e): self.events.append(e)
+
+    s = sn.DofusSniffer.__new__(sn.DofusSniffer)
+    s.event_queue = FakeQueue()
+    s.my_actor_id = "22240"
+    s._candidate_actor_id = None
+
+    s._parse_server_packet("GAS22240")
+    assert s.event_queue.events == []
+
 
 def test_parse_spell_cooldown_valid():
     result = sn._parse_spell_cooldown("181;3")

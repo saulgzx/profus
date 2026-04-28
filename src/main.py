@@ -7,6 +7,8 @@ import yaml
 import time
 from pynput import keyboard
 from bot import Bot
+from mouse_tracer import enable_mouse_trace
+enable_mouse_trace()
 
 PAUSE_KEY = keyboard.Key.f10
 STOP_KEY = keyboard.Key.f12
@@ -26,16 +28,18 @@ def on_press(key):
 
 
 def load_config(path=None):
-    if path is None:
-        path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except FileNotFoundError:
-        data = {}
-    for key in ("bot", "farming", "game", "leveling", "navigation"):
-        data.setdefault(key, {})
-    return data
+    """Wrapper compatible: delega a config_loader.load_config."""
+    from config_loader import load_config as _shared_load
+    return _shared_load(path)
+
+
+def save_config(config, path=None):
+    """Wrapper compatible: delega a config_loader.save_config.
+
+    Usado por bot.py:3705 (`from main import save_config`).
+    """
+    from config_loader import save_config as _shared_save
+    _shared_save(config, path)
 
 
 def main():

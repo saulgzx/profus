@@ -29,6 +29,10 @@ import threading
 import queue
 import re
 
+from app_logger import get_logger
+
+_log = get_logger("bot.sniff")
+
 _HASH_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 
 DOFUS_PORT = 443          # Ankama usa 443 sin TLS para bypass de firewalls
@@ -192,13 +196,20 @@ def _parse_as(data: str) -> dict | None:
 
 def _parse_gtm(data: str) -> list[dict]:
     """Parsea GTM|actor;?;max_hp;ap;mp;cell_id;;current_hp|...
-    Formato observado: actor_id;delta_or_seq;max_hp;ap;mp;cell_id;;current_hp
-    - parts[1] = delta de HP o secuencia (0 si sin daño) — NO es el HP actual
-    - parts[2] = max_hp
-    - parts[3] = ap actuales
-    - parts[4] = mp actuales
-    - parts[5] = cell_id
-    - parts[7] = hp actuales (si disponible), sino usar parts[2]
+
+    Formato largo (fighter vivo): actor_id;delta_or_seq;max_hp;ap;mp;cell_id;;current_hp
+      - parts[1] = delta de HP o secuencia (0 si sin daño) — NO es el HP actual
+      - parts[2] = max_hp
+      - parts[3] = ap actuales
+      - parts[4] = mp actuales
+      - parts[5] = cell_id
+      - parts[7] = hp actuales (si disponible), sino usar parts[2]
+
+    Formato corto (fighter muerto): `actor_id;1` — 2 campos exactos, el
+    segundo siempre "1". Confirmado con 7200 ocurrencias en 2163 GTMs
+    del log real del 2026-04-23 (siempre código=1 para muerte). Cuando
+    detectamos este formato, emitimos entry con `dead=True` para que el
+    bot marque `alive=False`.
     """
     entries: list[dict] = []
     for raw_entry in data.lstrip("|").split("|"):
@@ -208,11 +219,26 @@ def _parse_gtm(data: str) -> list[dict]:
         actor_id = parts[0].strip()
         if not actor_id:
             continue
+
         def _try_int(s: str) -> int | None:
             try:
                 return int(s.strip())
             except (ValueError, AttributeError):
                 return None
+
+        # Detectar formato corto "actor_id;1" = fighter muerto/eliminado.
+        if len(parts) == 2 and parts[1].strip() == "1":
+            entries.append({
+                "actor_id": actor_id,
+                "hp":      0,       # señal explícita de "muerto"
+                "ap":      None,
+                "mp":      None,
+                "cell_id": None,
+                "dead":    True,    # flag explícito para el handler
+                "raw":     raw_entry,
+            })
+            continue
+
         # HP actual: parts[7] si disponible y no vacío, sino parts[2] (max_hp = hp si sin daño)
         if len(parts) > 7 and parts[7].strip():
             hp = _try_int(parts[7])
@@ -226,7 +252,8 @@ def _parse_gtm(data: str) -> list[dict]:
             "ap":      _try_int(parts[3]) if len(parts) > 3 else None,
             "mp":      _try_int(parts[4]) if len(parts) > 4 else None,
             "cell_id": _try_int(parts[5]) if len(parts) > 5 else None,
-            "raw": raw_entry,
+            "dead":    False,
+            "raw":     raw_entry,
         })
     return entries
 
@@ -484,22 +511,22 @@ class DofusSniffer:
             from scapy.all import sniff, conf
             conf.verb = 0  # silenciar scapy
         except ImportError:
-            print("[SNIFFER] scapy no instalado — instala con: pip install scapy")
-            print("[SNIFFER] También necesitas Npcap: https://npcap.com/#download")
+            _log.info("[SNIFFER] scapy no instalado — instala con: pip install scapy")
+            _log.info("[SNIFFER] También necesitas Npcap: https://npcap.com/#download")
             return
 
         # Auto-detectar IP del servidor Dofus Retro buscando el proceso
         self.server_ips = self._detect_dofus_server_ips()
         self.server_ip = self.server_ips[0] if self.server_ips else None
         if self.server_ips:
-            print(f"[SNIFFER] Servidores Dofus detectados: {', '.join(self.server_ips)}")
+            _log.info(f"[SNIFFER] Servidores Dofus detectados: {', '.join(self.server_ips)}")
         else:
-            print(f"[SNIFFER] Servidor no detectado — capturando todo el puerto {DOFUS_PORT}")
+            _log.info(f"[SNIFFER] Servidor no detectado — capturando todo el puerto {DOFUS_PORT}")
 
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True, name="DofusSniffer")
         self._thread.start()
-        print(f"[SNIFFER] Iniciado — escuchando puerto {DOFUS_PORT}")
+        _log.info(f"[SNIFFER] Iniciado — escuchando puerto {DOFUS_PORT}")
 
     def _detect_dofus_server_ips(self) -> list[str]:
         """Busca las IPs del servidor Dofus Retro en las conexiones TCP activas."""
@@ -544,7 +571,7 @@ class DofusSniffer:
                     remote_ips.append(ip)
             return remote_ips
         except Exception as e:
-            print(f"[SNIFFER] Error detectando servidor: {e}")
+            _log.info(f"[SNIFFER] Error detectando servidor: {e}")
         return []
 
     def stop(self):
@@ -555,7 +582,7 @@ class DofusSniffer:
     def set_my_actor_id(self, actor_id: str):
         """Configura manualmente el ID del personaje (ver debug logs para encontrarlo)."""
         self.my_actor_id = actor_id
-        print(f"[SNIFFER] Actor ID configurado: {actor_id}")
+        _log.info(f"[SNIFFER] Actor ID configurado: {actor_id}")
 
     @property
     def active(self) -> bool:
@@ -572,7 +599,7 @@ class DofusSniffer:
             if server_ips:
                 host_filters = " or ".join(f"host {ip}" for ip in server_ips)
                 bpf = f"tcp port {DOFUS_PORT} and ({host_filters})"
-            print(f"[SNIFFER] Filtro BPF: {bpf}")
+            _log.info(f"[SNIFFER] Filtro BPF: {bpf}")
             sniff(
                 filter=bpf,
                 prn=self._on_packet,
@@ -580,8 +607,8 @@ class DofusSniffer:
                 store=False,
             )
         except Exception as e:
-            print(f"[SNIFFER] Error en captura: {e}")
-            print("[SNIFFER] Asegúrate de ejecutar como Administrador y tener Npcap instalado.")
+            _log.info(f"[SNIFFER] Error en captura: {e}")
+            _log.info("[SNIFFER] Asegúrate de ejecutar como Administrador y tener Npcap instalado.")
         finally:
             self._running = False
 
@@ -644,7 +671,7 @@ class DofusSniffer:
 
         except Exception as e:
             if self.debug_mode:
-                print(f"[SNIFFER] Error procesando paquete: {e}")
+                _log.info(f"[SNIFFER] Error procesando paquete: {e}")
 
     def _parse_and_emit(self, packet: str, from_server: bool):
         direction = "S→C" if from_server else "C→S"
@@ -703,7 +730,7 @@ class DofusSniffer:
             actor_id = body.split(".")[0].split("|")[0].strip()
             q.put(("turn_end", {"actor_id": actor_id}))
             if actor_id == self.my_actor_id:
-                print(f"[SNIFFER] Nuestro turno terminó (actor {actor_id})")
+                _log.info(f"[SNIFFER] Nuestro turno terminó (actor {actor_id})")
             return
 
         # ── GTS — inicio de turno ──────────────────────────────────────────
@@ -715,16 +742,16 @@ class DofusSniffer:
                 body = body.split(sep)[0]
             actor_id = body.strip()
             if not actor_id or not actor_id.lstrip("+-").isdigit():
-                print(f"[SNIFFER][DIAG] gts_unparsable raw={packet[:120]!r}")
+                _log.info(f"[SNIFFER][DIAG] gts_unparsable raw={packet[:120]!r}")
                 return
             q.put(("turn_start", {"actor_id": actor_id}))
-            print(f"[SNIFFER] Turno de actor {actor_id}")
+            _log.info(f"[SNIFFER] Turno de actor {actor_id}")
             return
 
         # ── GE — combate terminado ─────────────────────────────────────────
         if packet.startswith("GE") and not packet.startswith("GEA"):
             q.put(("fight_end", {"raw": packet[2:]}))
-            print(f"[SNIFFER] Combate terminado: {packet[2:30]}")
+            _log.info(f"[SNIFFER] Combate terminado: {packet[2:30]}")
             return
 
         # ── GP — celdas de colocación/preparación ──────────────────────────
@@ -733,16 +760,16 @@ class DofusSniffer:
             if parsed:
                 q.put(("placement_cells", parsed))
                 q.put(("placement", {"raw": packet[2:]}))
-                print("[SNIFFER] Celdas de colocacion detectadas")
+                _log.info("[SNIFFER] Celdas de colocacion detectadas")
             else:
                 q.put(("placement", {"raw": packet[2:]}))
-                print("[SNIFFER] Fase de colocacion detectada")
+                _log.info("[SNIFFER] Fase de colocacion detectada")
             return
 
         # ── Gp — compatibilidad/fallback de fase de colocación ─────────────
         if packet.startswith("Gp"):
             q.put(("placement", {"raw": packet[2:]}))
-            print("[SNIFFER] Fase de colocacion detectada")
+            _log.info("[SNIFFER] Fase de colocacion detectada")
             return
 
         # ── GJK — entró a combate ──────────────────────────────────────────
@@ -763,7 +790,7 @@ class DofusSniffer:
             q.put(("fight_join", {"raw": packet[3:], "fight_id": fight_id,
                                     "actor_id": actor_id, "team_id": team_id,
                                     "cell_id": cell_id}))
-            print(f"[DIAG] gjk fight={fight_id!r} actor={actor_id!r} team={team_id!r} cell={cell_id} raw={packet[:140]!r}")
+            _log.debug(f"[DIAG] gjk fight={fight_id!r} actor={actor_id!r} team={team_id!r} cell={cell_id} raw={packet[:140]!r}")
             return
 
         # ── S{actor_id} — servidor listo para siguiente acción del actor ─────
@@ -771,6 +798,30 @@ class DofusSniffer:
         if len(packet) > 1 and packet[0] == "S" and packet[1:].strip().lstrip("-").isdigit():
             actor_id = packet[1:].strip()
             q.put(("action_sequence_ready", {"actor_id": actor_id}))
+            return
+
+        # ── GAF — Game Action Finish (fin de animación) ───────────────────
+        # Formato: GAF{seq}|{actor_id}
+        # Se emite cuando el cliente termina la animación de una acción
+        # (movimiento, hechizo, desplazamiento). Crítico para saber CUÁNDO
+        # es seguro disparar el próximo input — antes del GAF el cliente
+        # tiene los inputs bloqueados por la animación.
+        # Confirmado con log 2026-04-23: move → GAF p50=235ms, p95=507ms.
+        if packet.startswith("GAF"):
+            body = packet[3:].strip()
+            parts = body.split("|")
+            actor_id = parts[1].strip() if len(parts) > 1 else ""
+            seq_id = parts[0].strip() if parts else ""
+            if actor_id:
+                q.put(("game_action_finish",
+                       {"actor_id": actor_id, "seq_id": seq_id, "raw": body}))
+            return
+
+        # ── GAS — Game Action Start (inicio de animación) ─────────────────
+        # Formato: GAS{actor_id}
+        # Menos crítico que GAF; por ahora solo lo dropeamos para que no
+        # caiga en el handler genérico de GA.
+        if packet.startswith("GAS"):
             return
 
         # ── GA — acción de juego ───────────────────────────────────────────
@@ -825,7 +876,7 @@ class DofusSniffer:
                         "actor_id": pa_actor,
                         "pa": pa, "pm": pm
                     }))
-                    print(f"[SNIFFER] PA={pa} PM={pm} (actor {pa_actor})")
+                    _log.info(f"[SNIFFER] PA={pa} PM={pm} (actor {pa_actor})")
                 except ValueError:
                     pass
             return
@@ -842,27 +893,27 @@ class DofusSniffer:
                 q.put(("combatant_cell", entry))
             if map_entries:
                 mob_count = sum(1 for entry in map_entries if entry.get("entity_kind") == "mob")
-                print(f"[SNIFFER] GM mapa: actores={len(map_entries)} mobs~={mob_count}")
+                _log.info(f"[SNIFFER] GM mapa: actores={len(map_entries)} mobs~={mob_count}")
             return
 
         if packet.startswith("GDM"):
             parsed = _parse_game_map_data(packet[3:])
             if parsed:
                 q.put(("map_data", parsed))
-                print(f"[DIAG] gdm id={parsed['map_id']} name={parsed['map_name']!r}")
+                _log.debug(f"[DIAG] gdm id={parsed['map_id']} name={parsed['map_name']!r}")
             else:
-                print(f"[DIAG] gdm raw_unparsed={packet[:200]!r}")
+                _log.debug(f"[DIAG] gdm raw_unparsed={packet[:200]!r}")
             return
 
         if packet.startswith("GDK"):
             q.put(("map_loaded", {"raw": packet[3:]}))
-            print(f"[DIAG] gdk raw={packet[:200]!r}")
+            _log.debug(f"[DIAG] gdk raw={packet[:200]!r}")
             return
 
         if packet.startswith("GIC"):
             entries = _parse_game_players_coordinates(packet[3:])
             q.put(("arena_state", {"entries": entries, "raw": packet[3:]}))
-            print(f"[DIAG] gic raw={packet[:200]!r}")
+            _log.debug(f"[DIAG] gic raw={packet[:200]!r}")
             return
 
         # ── GTM — stats de luchadores tras cada acción (HP/PA/PM) ─────────────
@@ -870,7 +921,7 @@ class DofusSniffer:
             entries = _parse_gtm(packet[3:])
             if entries:
                 q.put(("fighter_stats", {"entries": entries}))
-                print(f"[DIAG] gtm {len(entries)} luchadores raw={packet[:140]!r}")
+                _log.debug(f"[DIAG] gtm {len(entries)} luchadores raw={packet[:140]!r}")
             return
 
         if packet.startswith("As"):
@@ -885,6 +936,64 @@ class DofusSniffer:
             parsed = _parse_spell_cooldown(packet[2:])
             if parsed:
                 q.put(("spell_cooldown", parsed))
+            return
+
+        # ── JX — Job XP gain (señal sólida de fin de harvest) ────────────
+        # Formato observado: JX|{job_id};{level};?;{xp_pct_old};{xp_pct_new};{xp_total}
+        # Ej: JX|24;1;0;40;50;581687 (job=24=Minería, lvl 1, 40%→50%)
+        # Es la mejor señal de "harvest completo": el server solo manda JX
+        # cuando efectivamente sumaste XP de profesión.
+        if packet.startswith("JX"):
+            body = packet[2:].lstrip("|")
+            parts = body.split(";")
+            try:
+                job_id = int(parts[0]) if parts and parts[0] else None
+            except ValueError:
+                job_id = None
+            q.put(("job_xp", {"job_id": job_id, "raw": body}))
+            return
+
+        # ── GDF — Game Door Fact / Interactive object state ──────────────
+        # Formato: GDF|{cell};{state};{flag}|...
+        # state=2 → recurso siendo recolectado, state=3 → recurso agotado.
+        # Útil para invalidar resource_nodes en cache (GDF state=3 significa
+        # el mineral / planta ya no está disponible hasta respawn).
+        if packet.startswith("GDF"):
+            body = packet[3:].lstrip("|")
+            entries = []
+            for raw_entry in body.split("|"):
+                p = raw_entry.split(";")
+                if len(p) < 2:
+                    continue
+                try:
+                    entries.append({
+                        "cell_id": int(p[0]),
+                        "state": int(p[1]),
+                        "flag": int(p[2]) if len(p) > 2 and p[2] else 0,
+                    })
+                except (ValueError, TypeError):
+                    continue
+            if entries:
+                q.put(("interactive_state", {"entries": entries, "raw": body}))
+            return
+
+        # ── OAK — Object Added to Knapsack (item agregado al inventario) ──
+        # Formato observado: OAK{itemcode}~{template_id}~{qty}~~;
+        # Ej: OAKO7ad6d5b~138~2~~ → template_id=138, qty=2
+        # Otra señal de fin de harvest exitoso (item recibido).
+        if packet.startswith("OAK"):
+            body = packet[3:]
+            tmpl_id = None
+            qty = None
+            try:
+                # Skip primer "~split" (item code) y leer template/qty
+                tilde_parts = body.split("~")
+                if len(tilde_parts) >= 3:
+                    tmpl_id = int(tilde_parts[1])
+                    qty = int(tilde_parts[2])
+            except (ValueError, IndexError):
+                pass
+            q.put(("item_added", {"template_id": tmpl_id, "qty": qty, "raw": body}))
             return
 
         if packet.startswith("Im"):

@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <radialGradient id="eggGrad" cx="38%" cy="30%" r="78%" fx="33%" fy="25%">
+      <stop offset="0%" stop-color="#FFFF88"/>
+      <stop offset="30%" stop-color="#E0FF45"/>
+      <stop offset="60%" stop-color="#9ECB28"/>
+      <stop offset="88%" stop-color="#4E7A12"/>
+      <stop offset="100%" stop-color="#2E4A08"/>
+    </radialGradient>
+    <radialGradient id="highlight" cx="30%" cy="22%" r="28%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.85"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gearGrad" cx="35%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#3E5818"/>
+      <stop offset="60%" stop-color="#223608"/>
+      <stop offset="100%" stop-color="#0E1A02"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Egg base shape (wider at bottom, pointed at top, Sadida style) -->
+  <path d="M 100 12
+           C 144 12, 180 64, 180 120
+           C 180 170, 142 190, 100 190
+           C 58 190, 20 170, 20 120
+           C 20 64, 56 12, 100 12 Z"
+        fill="url(#eggGrad)"
+        stroke="#1E3206"
+        stroke-width="3"/>
+
+  <!-- Dofus texture spots (chispas oscuras que dan el look de huevo Sadida) -->
+  <ellipse cx="60" cy="150" rx="7" ry="3.5" fill="#2E4A08" opacity="0.45"
+           transform="rotate(22 60 150)"/>
+  <ellipse cx="145" cy="90" rx="5.5" ry="2.8" fill="#2E4A08" opacity="0.4"
+           transform="rotate(-18 145 90)"/>
+  <ellipse cx="125" cy="170" rx="4" ry="2" fill="#2E4A08" opacity="0.35"/>
+  <ellipse cx="40" cy="95" rx="3.5" ry="1.8" fill="#2E4A08" opacity="0.35"
+           transform="rotate(40 40 95)"/>
+  <ellipse cx="155" cy="145" rx="4" ry="2" fill="#2E4A08" opacity="0.3"
+           transform="rotate(-30 155 145)"/>
+
+  <!-- Central gear (engranaje) -->
+  <g transform="translate(100, 112)">
+    <!-- 8 teeth -->
+    <g fill="url(#gearGrad)" stroke="#0A1500" stroke-width="1.2" stroke-linejoin="round">
+      <rect x="-8" y="-42" width="16" height="20" rx="2"/>
+      <rect x="-8" y="-42" width="16" height="20" rx="2" transform="rotate(45)"/>
+      <rect x="-8" y="-42" width="16" height="20" rx="2" transform="rotate(90)"/>
+      <rect x="-8" y="-42" width="16" height="20" rx="2" transform="rotate(135)"/>
+      <rect x="-8" y="-42" width="16" height="20" rx="2" transform="rotate(180)"/>
+      <rect x="-8" y="-42" width="16" height="20" rx="2" transform="rotate(225)"/>
+      <rect x="-8" y="-42" width="16" height="20" rx="2" transform="rotate(270)"/>
+      <rect x="-8" y="-42" width="16" height="20" rx="2" transform="rotate(315)"/>
+    </g>
+    <!-- Gear body (disco central) -->
+    <circle r="30" fill="url(#gearGrad)" stroke="#0A1500" stroke-width="1.5"/>
+    <!-- Inner hole: verde claro, muestra el "núcleo" del huevo -->
+    <circle r="12" fill="#D8FF40" stroke="#0A1500" stroke-width="1.5"/>
+    <circle r="9.5" fill="none" stroke="#4E7A12" stroke-width="0.8"/>
+    <!-- Dot en el centro (tornillo) -->
+    <circle r="3" fill="#0E1A02"/>
+  </g>
+
+  <!-- Highlight glossy (gota de luz en top-left) -->
+  <ellipse cx="68" cy="55" rx="20" ry="36" fill="url(#highlight)"
+           transform="rotate(-12 68 55)"/>
+  <!-- Sparkle pequeño -->
+  <circle cx="56" cy="40" r="2.8" fill="#FFFFFF" opacity="0.85"/>
+  <circle cx="82" cy="30" r="1.4" fill="#FFFFFF" opacity="0.6"/>
+</svg>

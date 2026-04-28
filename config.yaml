@@ -1,12 +1,12 @@
-active_teleport_profile: Crujis
+active_teleport_profile: Crujis3
 bot:
   actor_id: '22240'
-  bank_unload_pods_threshold: 1800
+  bank_unload_pods_threshold: 1955
   cell_calibration:
     calibration_staging_points:
     - cell_id: 231
-      mouse_x: 2134
-      mouse_y: 526
+      mouse_x: 1542
+      mouse_y: 292
     - cell_id: 89
       mouse_x: 1214
       mouse_y: 458
@@ -95,6 +95,14 @@ bot:
         offset_x: 294.6
         offset_y: -35.38
         specific: true
+      '3262':
+        canvas_height: 1377
+        canvas_width: 2560
+        cell_height: 66.98
+        cell_width: 131.07
+        manual_lock: true
+        offset_x: 296.28
+        offset_y: -37.03
       '6370':
         auto_calibrated: true
         auto_calibrated_at: 1776454355.6299617
@@ -157,6 +165,172 @@ bot:
         saved_at: 1776520420.2538097
         screen_x: 1083
         screen_y: 420
+        source: auto_movement
+      '3171':
+      - cell_id: 312
+        saved_at: 1777295897.3085887
+        screen_x: 1345
+        screen_y: 718
+        source: auto_movement
+      - cell_id: 299
+        saved_at: 1777295903.167381
+        screen_x: 1541
+        screen_y: 660
+        source: auto_movement
+      - cell_id: 226
+        saved_at: 1777298216.8067284
+        screen_x: 1476
+        screen_y: 526
+        source: auto_movement
+      - cell_id: 196
+        saved_at: 1777298222.8454103
+        screen_x: 1345
+        screen_y: 436
+        source: auto_movement
+      '3172':
+      - cell_id: 151
+        saved_at: 1777295779.0430272
+        screen_x: 1148
+        screen_y: 366
+        source: auto_movement
+      '3216':
+      - cell_id: 168
+        saved_at: 1777291792.271071
+        screen_x: 1476
+        screen_y: 398
+        source: auto_movement
+      - cell_id: 152
+        saved_at: 1777291797.9284546
+        screen_x: 1279
+        screen_y: 340
+        source: auto_movement
+      - cell_id: 239
+        saved_at: 1777298284.7214968
+        screen_x: 1279
+        screen_y: 558
+        source: auto_movement
+      - cell_id: 226
+        saved_at: 1777298290.3945868
+        screen_x: 1476
+        screen_y: 500
+        source: auto_movement
+      '3217':
+      - cell_id: 167
+        saved_at: 1777292327.138238
+        screen_x: 1345
+        screen_y: 398
+        source: auto_movement
+      - cell_id: 151
+        saved_at: 1777295680.7750168
+        screen_x: 1148
+        screen_y: 366
+        source: auto_movement
+      - cell_id: 181
+        saved_at: 1777295686.7287772
+        screen_x: 1279
+        screen_y: 404
+        source: auto_movement
+      '3261':
+      - cell_id: 197
+        saved_at: 1777296133.0853293
+        screen_x: 1476
+        screen_y: 462
+        source: auto_movement
+      - cell_id: 239
+        saved_at: 1777296138.9905386
+        screen_x: 1279
+        screen_y: 532
+        source: auto_movement
+      - cell_id: 298
+        saved_at: 1777297864.5364444
+        screen_x: 1410
+        screen_y: 686
+        source: auto_movement
+      - cell_id: 256
+        saved_at: 1777297870.4034393
+        screen_x: 1607
+        screen_y: 564
+        source: auto_movement
+      '3262':
+      - cell_id: 68
+        saved_at: 1777292474.4780402
+        screen_x: 1673
+        screen_y: 148
+        source: auto_movement
+      - cell_id: 55
+        saved_at: 1777292595.7653067
+        screen_x: 1870
+        screen_y: 111
+        source: auto_movement
+      - cell_id: 95
+        saved_at: 1777293300.3241243
+        screen_x: 1410
+        screen_y: 219
+        source: auto_movement
+      - cell_id: 111
+        saved_at: 1777294385.3783214
+        screen_x: 1607
+        screen_y: 261
+        source: auto_movement
+      - cell_id: 99
+        saved_at: 1777294602.1920614
+        screen_x: 1936
+        screen_y: 222
+        source: auto_movement
+      - cell_id: 57
+        saved_at: 1777294620.2868216
+        screen_x: 2133
+        screen_y: 106
+        source: auto_movement
+      - cell_id: 56
+        saved_at: 1777294713.6593938
+        screen_x: 2001
+        screen_y: 106
+        source: auto_movement
+      - cell_id: 69
+        saved_at: 1777294726.4604802
+        screen_x: 1804
+        screen_y: 145
+        source: auto_movement
+      - cell_id: 153
+        saved_at: 1777296997.0709648
+        screen_x: 1410
+        screen_y: 381
+        source: auto_movement
+      - cell_id: 139
+        saved_at: 1777297003.049967
+        screen_x: 1476
+        screen_y: 338
+        source: auto_movement
+      - cell_id: 80
+        saved_at: 1777297106.3212893
+        screen_x: 1344
+        screen_y: 185
+        source: auto_movement
+      - cell_id: 182
+        saved_at: 1777297258.9411266
+        screen_x: 1410
+        screen_y: 485
+        source: auto_movement
+      - cell_id: 168
+        saved_at: 1777297264.919702
+        screen_x: 1476
+        screen_y: 423
+        source: auto_movement
+      - cell_id: 125
+        saved_at: 1777297927.9001935
+        screen_x: 1541
+        screen_y: 309
+        source: auto_movement
+      - cell_id: 222
+        saved_at: 1777298006.8053405
+        screen_x: 950
+        screen_y: 544
+        source: auto_movement
+      - cell_id: 197
+        saved_at: 1777298365.9730809
+        screen_x: 1476
+        screen_y: 479
         source: auto_movement
       '6370':
       - cell_id: 400
@@ -273,6 +447,30 @@ bot:
           '223':
             dx: 0
             dy: -12
+      '3172':
+        by_cell:
+          '125':
+            dx: 0
+            dy: -12
+      '3262':
+        by_cell:
+          '125':
+            dx: 0
+            dy: -12
+          '168':
+            dx: 0
+            dy: -15
+          '197':
+            dx: 0
+            dy: -15
+      '6536':
+        by_cell:
+          '312':
+            dx: 0
+            dy: -12
+          '447':
+            dx: 0
+            dy: 12
       '6539':
         by_cell:
           '183':
@@ -325,6 +523,128 @@ bot:
           '300':
             dx: 0
             dy: -10
+      '3171':
+        by_cell:
+          '196':
+            dx: 0
+            dy: -10
+          '270':
+            dx: 0
+            dy: -10
+          '284':
+            dx: 0
+            dy: -10
+          '299':
+            dx: 0
+            dy: -10
+      '3172':
+        by_cell:
+          '125':
+            dx: 0
+            dy: -10
+          '137':
+            dx: 0
+            dy: -10
+          '151':
+            dx: 0
+            dy: -10
+          '195':
+            dx: 0
+            dy: -10
+      '3216':
+        by_cell:
+          '152':
+            dx: 0
+            dy: -10
+          '226':
+            dx: 0
+            dy: -10
+      '3217':
+        by_cell:
+          '167':
+            dx: 0
+            dy: -10
+          '181':
+            dx: 0
+            dy: -10
+      '3261':
+        by_cell:
+          '239':
+            dx: 0
+            dy: -10
+          '256':
+            dx: 0
+            dy: -10
+      '3262':
+        by_cell:
+          '107':
+            dx: 0
+            dy: -10
+          '111':
+            dx: 0
+            dy: -10
+          '125':
+            dx: 0
+            dy: -10
+          '139':
+            dx: 0
+            dy: -10
+          '168':
+            dx: 0
+            dy: -10
+          '178':
+            dx: 0
+            dy: -10
+          '197':
+            dx: 0
+            dy: -10
+          '31':
+            dx: 0
+            dy: -10
+          '40':
+            dx: 0
+            dy: -10
+          '48':
+            dx: 0
+            dy: -10
+          '55':
+            dx: 0
+            dy: -10
+          '56':
+            dx: 0
+            dy: -10
+          '57':
+            dx: 0
+            dy: -10
+          '68':
+            dx: 0
+            dy: -10
+          '80':
+            dx: 0
+            dy: -10
+          '95':
+            dx: 0
+            dy: -10
+          '99':
+            dx: 0
+            dy: -10
+      '6536':
+        by_cell:
+          '312':
+            dx: 0
+            dy: 10
+          '327':
+            dx: 0
+            dy: -10
+          '432':
+            dx: 0
+            dy: 10
+          '447':
+            dx: 0
+            dy: -10
+          '462':
+            dx: 15
+            dy: 0
       '6539':
         by_cell:
           '183':
@@ -334,11 +654,14 @@ bot:
   combat_center_move_duration: 0.02
   combat_close_delay: 0.1
   combat_debug_capture: false
+  combat_entry_attack_retries: 2
+  combat_entry_attack_retry_delay: 0.6
   combat_entry_wait: 0.6
   combat_frame_delay: 0.02
   combat_idle_wait: 0.02
   combat_manual_mode: false
   combat_menu_open_delay: 0.08
+  combat_move_gaf_timeout: 0.4
   combat_move_retry_offsets:
   - - 0
     - 0
@@ -370,9 +693,11 @@ bot:
     - -45
   - - 0
     - 45
+  combat_movement_force_focus: false
   combat_ok_delay: 0.1
   combat_pa: 6
-  combat_placement_settle_delay: 4.0
+  combat_pa_regen_wait: 1.0
+  combat_placement_settle_delay: 0.2
   combat_poll_interval: 0.75
   combat_poll_interval_max: 0.25
   combat_poll_interval_min: 0.15
@@ -381,7 +706,10 @@ bot:
   combat_post_click_delay: 0.05
   combat_post_click_delay_max: 0.3
   combat_post_click_delay_min: 0.1
+  combat_post_confirm_delay: 0.6
+  combat_post_move_delay: 0.02
   combat_pre_capture_delay: 0.03
+  combat_pre_ready_delay: 0.6
   combat_pre_spell_pause: 0.03
   combat_priority_min_enemy_distance: 5
   combat_priority_movement_targets_by_map_id:
@@ -394,6 +722,23 @@ bot:
     2966:
       165: 165
       223: 268
+    3171:
+      226: 196
+      312: 314
+    3216:
+      168: 166
+      239: 241
+    3217:
+      151: 181
+    3261:
+      197: 253
+      298: 271
+    3262:
+      153: 139
+      182: 168
+    4402:
+      95: 151
+      179: 123
     6370:
       400: 357
   combat_priority_placement_cells_by_arena_fp: {}
@@ -407,27 +752,42 @@ bot:
     2966:
     - 223
     - 165
+    - 195
+    3171:
+    - 226
+    - 312
+    3172:
+    - 151
+    - 125
+    3216:
+    - 168
+    - 239
+    3217:
+    - 151
+    - 167
+    3261:
+    - 197
+    - 298
+    3262:
+    - 153
+    - 182
+    - 125
+    4402:
+    - 179
+    - 95
     6370:
     - 400
     - 329
   combat_profile: Sadida
+  combat_ps_tree_form_turns: 2
   combat_ready_delay: 0.12
   combat_self_spell_click_y_offset: -20
   combat_spell_pa_cost: 3
-  combat_spell_select_delay: 0.1
-  combat_spell_select_delay_max: 0.15
-  combat_spell_select_delay_min: 0.08
+  combat_spell_select_delay: 0.08
+  combat_spell_select_delay_max: 0.1
+  combat_spell_select_delay_min: 0.06
   combat_telemetry: true
   combat_telemetry_categories: []
-  # ── Mediciones de performance (opt-in) ───────────────────────────────
-  # perf_enabled         → graba spans/marks/points a logs/perf-YYYYMMDD.jsonl
-  # perf_packet_capture  → graba cada paquete del sniffer a
-  #                        logs/packets-YYYYMMDD.jsonl (fixture para replay)
-  # Ambos default false. Activar SOLO durante sesiones de profiling — la
-  # captura de packets puede generar ~1MB/min en combate intenso.
-  # Análisis offline:  python scripts/analyze_perf.py logs/perf-XXX.jsonl
-  perf_enabled: false
-  perf_packet_capture: false
   combat_turn_cooldown: 0.25
   combat_turn_cooldown_max: 0.25
   combat_turn_cooldown_min: 0.15
@@ -489,6 +849,8 @@ bot:
   mob_scan_idle_delay: 0.5
   nav_cell_click_cooldown: 3.5
   pause_key: F10
+  perf_enabled: true
+  perf_packet_capture: true
   pj_threshold: 0.4
   quick_click_pause_max: 0.05
   quick_click_pause_min: 0.01
@@ -506,6 +868,7 @@ bot:
   threshold: 0.55
   ui_threshold: 0.85
 farming:
+  _previous_mode: resource
   harvest_menu_offset:
   - 46
   - 70
@@ -513,7 +876,7 @@ farming:
   mode: route
   professions:
     Campesino:
-      enabled: true
+      enabled: false
       resources:
       - Avena
       - Cebada
@@ -673,7 +1036,8 @@ farming:
       - 811
       profession: Campesino
       resource: Avena
-  route_profile: Crujis
+  route_profile: Crujis3
+  smart_farming_enabled: false
   use_sprite_fallback: false
 game:
   game_roi:
@@ -687,6 +1051,11 @@ game:
   - 1440
   version: retro
   window_title: Dofus
+gui:
+  web_control_enabled: true
+  web_server_enabled: true
+  web_server_host: 0.0.0.0
+  web_server_port: 8000
 leveling:
   attack_menu_offset:
   - -60
@@ -812,7 +1181,7 @@ leveling:
       enabled: true
       template_ids:
       - 98
-  route_profile: Crujis
+  route_profile: Crujis3
   template_id_db:
     '101': Jalato
     '103': Prespic
@@ -844,77 +1213,170 @@ navigation:
   enabled: true
   route: &id001 []
   route_by_map_id: &id002
-    '3006':
-    - 407
-    - 526
-    '3007':
-    - 1213
-    - 45
-    '3008':
-    - 1862
-    - 46
-    '3009':
-    - 1870
-    - 43
-    '3010':
-    - 1474
-    - 44
     '3014':
-    - 1610
-    - 43
+    - 1606
+    - 54
     '3015':
-    - 1079
-    - 44
+    - 1088
+    - 47
     '3016':
-    - 1489
-    - 57
+    - 1464
+    - 41
     '3017':
     - 1342
     - 38
     '3018':
-    - 1340
-    - 34
+    - 1345
+    - 50
     '3019':
     - 1345
-    - 41
+    - 47
     '3020':
-    - 1345
-    - 43
+    - 1339
+    - 46
     '3021':
-    - 1340
+    - 1346
     - 42
     '3022':
-    - 1339
-    - 40
-    '4373':
+    - 1345
+    - 43
+    '3047':
+    - 2139
+    - 517
+    '3048':
+    - 1351
+    - 46
+    '3049':
     - 1342
-    - 47
+    - 56
+    '3050':
+    - 1075
+    - 52
+    '3051':
+    - 816
+    - 42
+    '3052':
+    - 1357
+    - 68
+    '3086':
+    - 2142
+    - 527
+    '3087':
+    - 1220
+    - 52
+    '3126':
+    - 2136
+    - 596
     '4376':
-    - 1347
-    - 57
+    - 2139
+    - 322
     '4380':
-    - 1867
-    - 49
+    - 1872
+    - 65
   route_exit_by_map_id: &id003 {}
   route_profiles:
     Crujis:
+      loop: true
+      route: []
+      route_by_map_id:
+        '3022':
+        - 492
+        - 84
+      route_exit_by_map_id: {}
+      sequence: []
+    Crujis2:
+      loop: true
+      route: []
+      route_by_map_id:
+        '3014':
+        - 1608
+        - 53
+        '3016':
+        - 1085
+        - 44
+        '3017':
+        - 1347
+        - 51
+        '3018':
+        - 1347
+        - 58
+        '3019':
+        - 1348
+        - 57
+        '3020':
+        - 1347
+        - 57
+        '3021':
+        - 1348
+        - 57
+        '3022':
+        - 1345
+        - 60
+        '3050':
+        - 2134
+        - 525
+        '3051':
+        - 820
+        - 48
+        '3052':
+        - 1348
+        - 57
+        '3053':
+        - 1215
+        - 47
+        '3087':
+        - 2132
+        - 529
+        '3088':
+        - 1221
+        - 58
+        '3089':
+        - 1215
+        - 46
+        '3090':
+        - 1087
+        - 54
+        '3126':
+        - 2148
+        - 594
+        '3127':
+        - 1208
+        - 49
+        '4380':
+        - 2132
+        - 458
+      route_exit_by_map_id: {}
+      sequence:
+      - exit_cell: 102
+        map_id: 4402
+        pause_s: 5.0
+      - exit_cell: 115
+        map_id: 4401
+        pause_s: 5.0
+    Crujis3:
       loop: true
       route: *id001
       route_by_map_id: *id002
       route_exit_by_map_id: *id003
       sequence:
-      - exit_cell: 218
-        map_id: 2966
-        pause_s: 5.0
-      - exit_cell: 189
-        map_id: 2926
-        pause_s: 5.0
+      - exit_cell: 260
+        map_id: 3171
+        pause_s: 3.0
       - exit_cell: 202
-        map_id: 2881
-        pause_s: 5.0
-      - exit_cell: 231
-        map_id: 2926
-        pause_s: 5.0
+        map_id: 3216
+        pause_s: 3.0
+      - exit_cell: 456
+        map_id: 3261
+        pause_s: 3.0
+      - exit_cell: 189
+        map_id: 3262
+        pause_s: 3.0
+      - exit_cell: 189
+        map_id: 3217
+        pause_s: 3.0
+      - exit_cell: 21
+        map_id: 3172
+        pause_s: 3.0
     FarmJalato:
       route: []
       route_by_map_id: {}
@@ -936,8 +1398,12 @@ navigation:
         - 526
       route_exit_by_map_id: {}
     Porkazos:
+      loop: true
       route: []
       route_by_map_id:
+        '3127':
+        - 1213
+        - 54
         '3656':
         - 1344
         - 1069
@@ -975,6 +1441,7 @@ navigation:
         - 1221
         - 60
       route_exit_by_map_id: {}
+      sequence: []
     Ratas:
       route: []
       route_by_map_id:
@@ -993,6 +1460,10 @@ navigation:
         '7412': cell:455
         '7413': cell:456
         '7414': cell:142
+notifications:
+  enabled: false
+  ntfy_server: https://ntfy.sh
+  ntfy_topic: ''
 teleport_enabled: true
 teleport_profiles:
   Crujis:
@@ -1000,8 +1471,24 @@ teleport_profiles:
     dest_image: SierradeCania
     expected_map: '3022'
     farm_map: '2966'
-    mobs_activate: 273,274,275,278,293,296,276
+    mobs_activate: 273,274,275,278,293,296,276,259,112,442,447
     route_name: Crujis
+    trigger_map: '7411'
+  Crujis2:
+    cell_id: '102'
+    dest_image: ''
+    expected_map: '4402'
+    farm_map: '4402'
+    mobs_activate: ''
+    route_name: Crujis2
+    trigger_map: '4402'
+  Crujis3:
+    cell_id: '268'
+    dest_image: SierradeCania
+    expected_map: '3022'
+    farm_map: '3171'
+    mobs_activate: 273,274,275,278,293,296,276,259,112,442,447
+    route_name: Crujis3
     trigger_map: '7411'
   Farm Jalato:
     cell_id: '268'

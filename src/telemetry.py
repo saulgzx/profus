@@ -29,6 +29,11 @@ import time
 import threading
 from logging.handlers import RotatingFileHandler
 
+from app_logger import get_logger
+
+_log = get_logger("bot.telemetry")
+
+
 _LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
 
 
@@ -54,6 +59,10 @@ class CombatTelemetry:
         self._lock = threading.Lock()
         self._categories_filter: set[str] | None = None  # None = todas
         self._opened_date: str | None = None
+        # Subscribers live (GUI dashboard, etc). Se llaman SIEMPRE aunque
+        # `enabled=False` — los subs no dependen del JSONL.
+        self._subscribers: list = []
+        self._subscribers_lock = threading.Lock()
 
     # ── Setup ────────────────────────────────────────────────────────────
 
@@ -99,7 +108,7 @@ class CombatTelemetry:
             handler._combat_managed = True
             logger.addHandler(handler)
         except Exception as exc:
-            print(f"[TELEMETRY] No se pudo abrir log rotativo: {exc!r}")
+            _log.info(f"[TELEMETRY] No se pudo abrir log rotativo: {exc!r}")
         self._logger = logger
         self._log_path = log_path
 
@@ -114,7 +123,7 @@ class CombatTelemetry:
             self._jsonl_file = open(jsonl_path, "a", encoding="utf-8", buffering=1)
             self._jsonl_path = jsonl_path
         except Exception as exc:
-            print(f"[TELEMETRY] No se pudo abrir JSONL: {exc!r}")
+            _log.info(f"[TELEMETRY] No se pudo abrir JSONL: {exc!r}")
             self._jsonl_file = None
 
     def _close(self) -> None:
@@ -179,10 +188,12 @@ class CombatTelemetry:
     # ── Emisores ─────────────────────────────────────────────────────────
 
     def emit(self, kind: str, **payload) -> None:
-        """Escribe un record JSONL. No bloquea si esta deshabilitado."""
-        if not self.enabled or self._jsonl_file is None:
-            return
-        self._maybe_rotate_for_day()
+        """Escribe un record JSONL y notifica subscribers live.
+
+        No bloquea si `enabled=False` — pero igual notifica subscribers
+        porque el dashboard depende de eventos en vivo incluso con
+        telemetry deshabilitado.
+        """
         record = {
             "ts": round(time.time(), 4),
             "kind": kind,
@@ -190,19 +201,54 @@ class CombatTelemetry:
             "turn": self._turn_number,
         }
         record.update(payload)
-        try:
-            line = json.dumps(record, ensure_ascii=False, default=str)
-        except Exception as exc:
-            line = json.dumps({
-                "ts": record["ts"], "kind": "telemetry_error",
-                "error": repr(exc), "kind_attempted": kind,
-            })
-        try:
-            with self._lock:
-                if self._jsonl_file is not None:
-                    self._jsonl_file.write(line + "\n")
-        except Exception:
-            pass
+
+        # 1) JSONL write (solo si enabled)
+        if self.enabled and self._jsonl_file is not None:
+            self._maybe_rotate_for_day()
+            try:
+                line = json.dumps(record, ensure_ascii=False, default=str)
+            except Exception as exc:
+                line = json.dumps({
+                    "ts": record["ts"], "kind": "telemetry_error",
+                    "error": repr(exc), "kind_attempted": kind,
+                })
+            try:
+                with self._lock:
+                    if self._jsonl_file is not None:
+                        self._jsonl_file.write(line + "\n")
+            except Exception:
+                pass
+
+        # 2) Notificar subscribers live (SIEMPRE). Cada callback se aísla
+        # en try/except para que un sub que crashea no afecte otros ni el hot
+        # path del combate. Copiamos la lista bajo lock y llamamos fuera.
+        with self._subscribers_lock:
+            subs = list(self._subscribers)
+        if subs:
+            for cb in subs:
+                try:
+                    cb(record)
+                except Exception:
+                    pass
+
+    def subscribe(self, callback) -> callable:
+        """Registra un callback `callback(record: dict) -> None`.
+
+        Devuelve una función `unsubscribe()` para remover.
+        Los callbacks se llaman sincronamente desde emit() en el thread del
+        bot — deben ser rápidos (O(µs)). Para trabajo pesado, pushear a una
+        queue y procesar en otro thread.
+        """
+        with self._subscribers_lock:
+            self._subscribers.append(callback)
+
+        def _unsubscribe():
+            with self._subscribers_lock:
+                try:
+                    self._subscribers.remove(callback)
+                except ValueError:
+                    pass
+        return _unsubscribe
 
     # ── Logger conveniences ──────────────────────────────────────────────
 

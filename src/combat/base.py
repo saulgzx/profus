@@ -48,7 +48,9 @@ class CombatContext:
                  record_learned_offset=None,
                  get_spell_jitter_offset=None,
                  move_random_reachable=None,
-                 manual_pixel_for_cell=None):
+                 manual_pixel_for_cell=None,
+                 priority_movement_target_cell=None,
+                 game_state=None):
         self.screen          = screen
         self.ui_detector     = ui_detector
         self.actions         = actions
@@ -82,6 +84,21 @@ class CombatContext:
         # SIN offsets (y-offset del cuerpo, jitter, learned). Rule:
         # rule_manual_pixel_positions_law.md.
         self.manual_pixel_for_cell = manual_pixel_for_cell
+        # Lookup del priority_movement_target_cell del mapa actual.
+        # Devuelve cell_id si el mapa actual tiene `bot.combat_priority_movement_targets_by_map_id[<map>]`
+        # configurado, None en caso contrario. Cuando hay priority configurado
+        # y el PJ NO está ahí, los perfiles deben preferir mover a esa celda
+        # ANTES que aplicar atajos de "ya alcanzo a todos desde acá" — la
+        # configuración del usuario manda. Reportado 2026-04-26: bot quedó
+        # casteando combo desde cell 186 en map 2926 cuando priority_target=214
+        # porque skip_movement-by-AoE-range pisaba al priority.
+        self.priority_movement_target_cell = priority_movement_target_cell
+        # Fase 3 — referencia al GameState (fuente unica de verdad). Opcional
+        # por backwards-compat: si Bot no lo pasa, los perfiles caen al
+        # comportamiento clasico (leer de current_pa/current_mp/my_cell).
+        # Cuando esta presente, los perfiles pueden chequear staleness con
+        # `ctx.game_state.is_stale("pa", max_age_s=5.0)`.
+        self.game_state = game_state
 
 
 class CombatProfile:

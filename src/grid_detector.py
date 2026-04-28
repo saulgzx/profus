@@ -23,6 +23,11 @@ import cv2
 import numpy as np
 from typing import NamedTuple
 
+from app_logger import get_logger
+
+_log = get_logger("bot.calibration")
+
+
 
 # ─────────────────────────────── filtros de contorno ──
 _MIN_AREA   = 300
@@ -105,7 +110,7 @@ class IsoGridDetector:
         blue_rings = self._nms(blue_rings, radius=_NMS_RADIUS)
         all_rings  = self._nms(red_rings + blue_rings, radius=_NMS_RADIUS)
 
-        print(
+        _log.debug(
             f"[GRID] Aros: total={len(all_rings)} "
             f"rojo={len(red_rings)} azul={len(blue_rings)}  "
             f"Celdas GIC: {len(cell_ids)}"
@@ -169,7 +174,7 @@ class IsoGridDetector:
         if len(valid) == 1:
             return valid[0]
         if len(valid) > 1:
-            print(f"[GRID] {len(valid)} candidatos rojos — seleccionando el más central")
+            _log.debug(f"[GRID] {len(valid)} candidatos rojos — seleccionando el más central")
             cx = monitor["left"] + monitor["width"]  / 2
             cy = monitor["top"]  + monitor["height"] / 2
             # Preferir el aro más cercano al centro del monitor
@@ -231,7 +236,7 @@ class IsoGridDetector:
                     best_inliers = inlier_origins
 
         if best_score < _MIN_RANSAC_SCORE:
-            print(
+            _log.debug(
                 f"[GRID] RANSAC score={best_score}/{len(ring_positions)} "
                 f"< mínimo ({_MIN_RANSAC_SCORE}) — descartado"
             )
@@ -241,12 +246,12 @@ class IsoGridDetector:
         ys = [o[1] for o in best_inliers]
         refined = (float(np.median(xs)), float(np.median(ys)))
         spread  = float(np.std(xs + ys)) if len(xs) > 1 else 0.0
-        print(
+        _log.debug(
             f"[GRID] RANSAC score={best_score}/{len(ring_positions)} "
             f"spread={spread:.1f}px origin={refined}"
         )
         if spread > _MAX_RANSAC_SPREAD:
-            print(
+            _log.debug(
                 f"[GRID] RANSAC rechazado — spread={spread:.1f}px "
                 f"> máximo ({_MAX_RANSAC_SPREAD}px), probable falso positivo"
             )
@@ -413,9 +418,9 @@ class IsoGridDetector:
             cv2.putText(dbg, f"conf={conf} score={score}", (10, 35),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
             cv2.imwrite(path, dbg)
-            print(f"[GRID] Debug imagen guardada: {path}")
+            _log.debug(f"[GRID] Debug imagen guardada: {path}")
         except Exception as e:
-            print(f"[GRID] Error guardando debug image: {e}")
+            _log.debug(f"[GRID] Error guardando debug image: {e}")
 
     # ─────────────────────────────────────── utils ──
 

@@ -2,6 +2,11 @@ import cv2
 import numpy as np
 import os
 
+from app_logger import get_logger
+
+_log = get_logger("bot.detector")
+
+
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "templates")
 
@@ -18,7 +23,7 @@ class Detector:
             path = os.path.join(TEMPLATES_DIR, category, f"{name}.png")
             if not os.path.exists(path):
                 if path not in self._missing:
-                    print(f"[DETECTOR] Template no encontrada: {path}")
+                    _log.info(f"[DETECTOR] Template no encontrada: {path}")
                     self._missing.add(path)
                 return None
             img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
@@ -89,7 +94,7 @@ class Detector:
         """Busca todas las instancias de un mob usando sus multiples sprites."""
         mob_dir = os.path.join(TEMPLATES_DIR, "mobs", mob_name)
         if not os.path.isdir(mob_dir):
-            print(f"[DETECTOR] Carpeta de mob no encontrada: {mob_dir}")
+            _log.info(f"[DETECTOR] Carpeta de mob no encontrada: {mob_dir}")
             return []
 
         all_points = []

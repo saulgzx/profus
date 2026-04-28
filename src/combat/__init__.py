@@ -3,6 +3,11 @@ import importlib
 
 from .base import CombatProfile, CombatContext
 
+from app_logger import get_logger
+
+_log = get_logger("bot.combat")
+
+
 _COMBAT_DIR = os.path.dirname(__file__)
 _SKIP = {"__init__.py", "base.py"}
 
@@ -17,7 +22,7 @@ def _iter_profile_modules():
             if hasattr(mod, "Profile") and hasattr(mod.Profile, "name"):
                 yield mod
         except Exception as e:
-            print(f"[COMBAT] Error cargando modulo '{mod_name}': {e}")
+            _log.warning(f"[COMBAT] Error cargando modulo '{mod_name}': {e}")
 
 
 def list_profiles() -> list[str]:
@@ -30,5 +35,5 @@ def load_profile(name: str) -> CombatProfile:
     for mod in _iter_profile_modules():
         if mod.Profile.name == name:
             return mod.Profile()
-    print(f"[COMBAT] Perfil '{name}' no encontrado — usando perfil base")
+    _log.warning(f"[COMBAT] Perfil '{name}' no encontrado — usando perfil base")
     return CombatProfile()

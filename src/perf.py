@@ -51,6 +51,11 @@ import threading
 import time
 from contextlib import contextmanager
 
+from app_logger import get_logger
+
+_log = get_logger("bot.perf")
+
+
 
 _LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
 
@@ -109,7 +114,7 @@ class PerfRecorder:
             self._perf_file = open(path, "a", encoding="utf-8", buffering=1)
             self._perf_path = path
         except Exception as exc:
-            print(f"[PERF] No se pudo abrir {path}: {exc!r}")
+            _log.info(f"[PERF] No se pudo abrir {path}: {exc!r}")
             self._perf_file = None
 
     def _close_perf(self) -> None:
@@ -128,7 +133,7 @@ class PerfRecorder:
             self._packet_file = open(path, "a", encoding="utf-8", buffering=1)
             self._packet_path = path
         except Exception as exc:
-            print(f"[PERF] No se pudo abrir {path}: {exc!r}")
+            _log.info(f"[PERF] No se pudo abrir {path}: {exc!r}")
             self._packet_file = None
 
     def _close_packets(self) -> None:

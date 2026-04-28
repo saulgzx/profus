@@ -4,6 +4,12 @@ import time
 
 
 pyautogui.FAILSAFE = True  # Mover mouse a esquina superior izquierda para detener
+# pyautogui aplica por default un sleep de 100ms DESPUÉS de cada moveTo/click/press.
+# Medido 2026-04-23: sumaba ~200ms a cada quick_click (p50=234ms) — ~10min/sesión
+# de puro wait muerto. Nosotros ya tenemos nuestros propios pauses configurables
+# (quick_move_*, quick_click_pause_*, quick_key_pause_*) que cubren el tiempo
+# que el cliente de Dofus necesita entre inputs. Desactivar PAUSE es seguro.
+pyautogui.PAUSE = 0
 
 
 class Actions:

@@ -25,4 +25,10 @@ pj_card_mask_debug.png
 screenshot_debug.png
 query
 backups/
+backup_*/
 .claude/
+.pytest_cache/
+*.log
+gui_error.log
+*.bak
+*.tmp

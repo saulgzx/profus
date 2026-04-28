@@ -28,9 +28,29 @@ import pyautogui
 from pynput import keyboard as kb
 
 from bot import Bot
+from mouse_tracer import enable_mouse_trace
+enable_mouse_trace()
 from detector import Detector
 from map_logic import cell_id_to_grid
 from combat import load_profile
+from gui_dashboard import DashboardMetrics, build_dashboard_tab
+
+from app_logger import get_logger
+
+_log = get_logger("bot.gui")
+
+try:
+    from telemetry import get_telemetry as _get_telemetry
+except Exception:
+    _get_telemetry = None
+try:
+    from gui_web import WebDashboardServer
+except Exception:
+    WebDashboardServer = None
+try:
+    from notifications import NotificationClient
+except Exception:
+    NotificationClient = None
 
 RESOURCES_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "templates", "resources")
 UI_DIR        = os.path.join(os.path.dirname(__file__), "..", "assets", "templates", "ui")
@@ -87,13 +107,14 @@ BORDER_SUBTLE  = "#1F242C"
 BORDER_DEFAULT = "#2A3038"
 BORDER_STRONG  = "#3A4150"
 
-# Semantica
+# Semantica (DANGER oscurecido de #F87171 a #EF4444 — WCAG AA body con texto blanco)
 SUCCESS = "#4ADE80"
 WARNING = "#FBBF24"
-DANGER  = "#F87171"
+DANGER  = "#EF4444"
 INFO    = "#38BDF8"
 
 # Tipografia (Segoe UI esta en Win10/11; Consolas siempre)
+# FONT_CAPTION y FONT_LABEL subidos de 9 a 10 px para legibilidad densa (listas/logs).
 FONT_FAMILY      = "Segoe UI"
 FONT_FAMILY_MONO = "Consolas"
 FONT_DISPLAY     = (FONT_FAMILY, 15, "bold")     # logo/header titulo
@@ -101,11 +122,11 @@ FONT_HEADING     = (FONT_FAMILY, 12, "bold")     # seccion grande
 FONT_TITLE       = (FONT_FAMILY, 11, "bold")     # subtitulo/card title
 FONT_BODY        = (FONT_FAMILY, 10)             # default
 FONT_BODY_BOLD   = (FONT_FAMILY, 10, "bold")
-FONT_CAPTION     = (FONT_FAMILY, 9)              # secundario/dim
-FONT_LABEL       = (FONT_FAMILY, 9, "bold")      # uppercase labels
+FONT_CAPTION     = (FONT_FAMILY, 10)             # secundario/dim
+FONT_LABEL       = (FONT_FAMILY, 10, "bold")     # uppercase labels
 FONT_BUTTON      = (FONT_FAMILY, 9, "bold")
-FONT_MONO        = (FONT_FAMILY_MONO, 9)
-FONT_MONO_SMALL  = (FONT_FAMILY_MONO, 8)
+FONT_MONO        = (FONT_FAMILY_MONO, 10)
+FONT_MONO_SMALL  = (FONT_FAMILY_MONO, 9)
 
 # Espaciado (multiplos de 4)
 SP_1, SP_2, SP_3, SP_4, SP_5, SP_6, SP_8 = 4, 8, 12, 16, 20, 24, 32
@@ -127,6 +148,34 @@ TEXT    = TEXT_PRIMARY
 SUBTEXT = TEXT_SECONDARY
 DIM     = TEXT_TERTIARY
 BORDER  = BORDER_DEFAULT
+
+
+# ── DashboardTokens — namespace plano que gui_dashboard.py consume ─────
+# Evita importar 20 constantes sueltas en el módulo del dashboard; le
+# pasamos este objeto y el dashboard lee tokens.BG, tokens.FONT_BODY, etc.
+class _DashboardTokens:
+    BG = BG
+    BG_BASE = BG_BASE
+    BG_SUBTLE = BG_SUBTLE
+    BG_ELEVATED = BG_ELEVATED
+    BG_OVERLAY = BG_OVERLAY
+    BRAND = BRAND
+    SUCCESS = SUCCESS
+    WARNING = WARNING
+    DANGER = DANGER
+    INFO = INFO
+    TEXT_PRIMARY = TEXT_PRIMARY
+    TEXT_SECONDARY = TEXT_SECONDARY
+    TEXT_TERTIARY = TEXT_TERTIARY
+    BORDER_DEFAULT = BORDER_DEFAULT
+    FONT_FAMILY = FONT_FAMILY
+    FONT_BODY = FONT_BODY
+    FONT_CAPTION = FONT_CAPTION
+    FONT_LABEL = FONT_LABEL
+    SP_1 = SP_1
+    SP_2 = SP_2
+    SP_3 = SP_3
+    SP_4 = SP_4
 
 
 def _should_emit_runtime_log(msg: str) -> bool:
@@ -155,18 +204,15 @@ def _should_emit_runtime_log(msg: str) -> bool:
 
 
 def load_config():
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except FileNotFoundError:
-        data = {}
-    for key in ("bot", "farming", "game", "leveling", "navigation"):
-        data.setdefault(key, {})
-    return data
+    """Wrapper compatible: delega a config_loader.load_config con CONFIG_PATH."""
+    from config_loader import load_config as _shared_load
+    return _shared_load(CONFIG_PATH)
+
 
 def save_config(config):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        yaml.dump(config, f, allow_unicode=True)
+    """Wrapper compatible: delega a config_loader.save_config."""
+    from config_loader import save_config as _shared_save
+    _shared_save(config, CONFIG_PATH)
 
 
 # ================================================================ Captura ==
@@ -463,6 +509,121 @@ class BotThread(threading.Thread):
         self._running = False
 
 
+# ================================================================== Tooltip ==
+class _Tooltip:
+    """Tooltip ligero para widgets tk. Aparece abajo del widget con delay.
+
+    Uso:
+        _Tooltip(mi_boton, "Atajo: F12 · Inicia el bot")
+    """
+    _ACTIVE = None  # singleton activo (evita duplicados)
+
+    def __init__(self, widget, text: str, delay_ms: int = 450):
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self._after_id = None
+        self._tip = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _e=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay_ms, self._show)
+
+    def _cancel(self):
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
+            self._after_id = None
+
+    def _show(self):
+        if self._tip is not None or not self.text:
+            return
+        # Cerrar tooltip previo activo
+        if _Tooltip._ACTIVE is not None and _Tooltip._ACTIVE is not self:
+            try:
+                _Tooltip._ACTIVE._hide()
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
+        try:
+            x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2 - 60
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        except Exception:
+            return
+        tip = tk.Toplevel(self.widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        try:
+            tip.wm_attributes("-topmost", True)
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+        frame = tk.Frame(tip, bg=BG_OVERLAY, highlightthickness=1,
+                         highlightbackground=BORDER_DEFAULT)
+        frame.pack()
+        tk.Label(frame, text=self.text, bg=BG_OVERLAY, fg=TEXT_PRIMARY,
+                 font=FONT_CAPTION, padx=10, pady=5, justify="left").pack()
+        self._tip = tip
+        _Tooltip._ACTIVE = self
+        # Fade-in suave via step de alpha en Toplevel (funciona en Win/Mac)
+        try:
+            tip.wm_attributes("-alpha", 0.0)
+            self._fade_in(tip, 0.0)
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+    def _fade_in(self, tip, alpha: float):
+        if tip is None or not tip.winfo_exists():
+            return
+        new_alpha = min(1.0, alpha + 0.15)
+        try:
+            tip.wm_attributes("-alpha", new_alpha)
+        except Exception:
+            return
+        if new_alpha < 1.0:
+            tip.after(16, self._fade_in, tip, new_alpha)
+
+    def _hide(self, _e=None):
+        self._cancel()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
+            self._tip = None
+            if _Tooltip._ACTIVE is self:
+                _Tooltip._ACTIVE = None
+
+    @classmethod
+    def attach(cls, widget, text: str, delay_ms: int = 450):
+        """Factory shortcut: _Tooltip.attach(btn, 'foo')."""
+        return cls(widget, text, delay_ms=delay_ms)
+
+
+# ============================================================ Color helpers ==
+def _hex_to_rgb(h: str):
+    h = h.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _rgb_to_hex(rgb):
+    return "#{:02X}{:02X}{:02X}".format(*(max(0, min(255, int(c))) for c in rgb))
+
+
+def _lerp_color(c1: str, c2: str, t: float) -> str:
+    """Interpola entre dos colores hex. t=0 → c1, t=1 → c2."""
+    r1, g1, b1 = _hex_to_rgb(c1)
+    r2, g2, b2 = _hex_to_rgb(c2)
+    return _rgb_to_hex((
+        r1 + (r2 - r1) * t,
+        g1 + (g2 - g1) * t,
+        b1 + (b2 - b1) * t,
+    ))
+
+
 # ===================================================================== App ==
 class App(tk.Tk):
     def _place_window_on_monitor(self, width: int, height: int, monitor_index: int = 2) -> None:
@@ -480,12 +641,12 @@ class App(tk.Tk):
 
                 idx_zero_based = max(0, int(monitor_index) - 1)
                 if idx_zero_based >= len(real_monitors):
-                    print(f"[GUI] Monitor {monitor_index} no disponible "
+                    _log.info(f"[GUI] Monitor {monitor_index} no disponible "
                            f"({len(real_monitors)} detectado/s) — usando monitor 1.")
                     idx_zero_based = 0
                 monitor = real_monitors[idx_zero_based]
         except Exception as exc:
-            print(f"[GUI] Error enumerando monitores: {exc!r}")
+            _log.info(f"[GUI] Error enumerando monitores: {exc!r}")
             self.geometry(f"{width}x{height}")
             return
 
@@ -495,8 +656,8 @@ class App(tk.Tk):
         # Diferir el lift para que el WM ya haya colocado la ventana.
         try:
             self.after(50, lambda: (self.lift(), self.focus_force()))
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
 
     def __init__(self):
         super().__init__()
@@ -510,8 +671,8 @@ class App(tk.Tk):
             ico_path = os.path.join(os.path.dirname(__file__), "..", "assets", "brand", "logo.ico")
             if os.path.exists(ico_path):
                 self.iconbitmap(default=ico_path)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
         # Monitor preferido (configurable): por defecto secundario (2).
         # Si no existe, _place_window_on_monitor cae al primario con log.
         _cfg = load_config()
@@ -521,7 +682,8 @@ class App(tk.Tk):
         except (TypeError, ValueError):
             preferred_monitor = 2
         self._place_window_on_monitor(1100, 720, monitor_index=preferred_monitor)
-        self.minsize(800, 500)
+        # Minsize 960x600: evita truncamiento severo de pestañas en ventana angosta.
+        self.minsize(960, 600)
         self.config_data = _cfg
         self.bot_thread = None
         self.log_queue = queue.Queue()
@@ -622,6 +784,72 @@ class App(tk.Tk):
         self._harvested_count = 0
         self._pods_label = ""
 
+        # ── Dashboard live (se instancia ANTES de _build_ui para que la tab
+        # pueda referenciarlo). Se subscribe a telemetry para recibir eventos
+        # en vivo del bot. Se llama a _dashboard_refresh() desde _poll_queue.
+        self._dashboard_metrics = DashboardMetrics()
+        self._dashboard_refresh = None     # callable, seteado por build_dashboard_tab
+        self._dashboard_unsub = None       # función para cancelar el sub
+        self._dashboard_last_refresh_at = 0.0  # throttle a 4 Hz (250ms)
+        if _get_telemetry is not None:
+            try:
+                self._dashboard_unsub = _get_telemetry().subscribe(
+                    self._dashboard_metrics.on_event
+                )
+            except Exception:
+                self._dashboard_unsub = None
+
+        # ── Push notifications (ntfy.sh) ────────────────────────────────
+        # Si config.notifications.enabled y topic configurado, envía push
+        # al celular en eventos críticos (muerte del PJ por ahora; ampliable).
+        self._notifier = None
+        notif_cfg = (self.config_data.get("notifications") or {})
+        if NotificationClient is not None and notif_cfg.get("enabled", False):
+            try:
+                self._notifier = NotificationClient(
+                    topic=str(notif_cfg.get("ntfy_topic", "") or ""),
+                    server=str(notif_cfg.get("ntfy_server", "https://ntfy.sh") or "https://ntfy.sh"),
+                )
+                if self._notifier.enabled and _get_telemetry is not None:
+                    _get_telemetry().subscribe(self._on_telemetry_for_notifications)
+                    _log.info(f"[NOTIFY] Activado (topic={self._notifier.topic})")
+                else:
+                    self._notifier = None
+            except Exception as exc:
+                _log.info(f"[NOTIFY] No se pudo inicializar: {exc}")
+                self._notifier = None
+
+        # ── Web dashboard server (opcional, acceso mobile/Tailscale) ─────
+        # Si config.gui.web_server_enabled es true, levanta un HTTP server
+        # que expone los mismos datos del dashboard vía API + página web
+        # responsive. Acceso típico desde celular usando Tailscale:
+        # http://{hostname}.ts.net:{port}
+        self._web_server = None
+        gui_cfg = self.config_data.get("gui", {}) or {}
+        if WebDashboardServer is not None and bool(gui_cfg.get("web_server_enabled", False)):
+            try:
+                web_host = str(gui_cfg.get("web_server_host", "0.0.0.0"))
+                web_port = int(gui_cfg.get("web_server_port", 8000) or 8000)
+                # control_enabled opcional: si False, los endpoints POST
+                # devuelven 503 (útil por seguridad si exponés en LAN abierta)
+                ctrl_handler = (
+                    self._handle_web_control
+                    if bool(gui_cfg.get("web_control_enabled", True))
+                    else None
+                )
+                self._web_server = WebDashboardServer(
+                    state_provider=self._collect_dashboard_state,
+                    host=web_host,
+                    port=web_port,
+                    control_handler=ctrl_handler,
+                    game_state_provider=self._collect_game_state_dict,
+                )
+                if not self._web_server.start():
+                    self._web_server = None
+            except Exception as exc:
+                _log.info(f"[WEB] No se pudo iniciar web server: {exc}")
+                self._web_server = None
+
         self._setup_hotkeys()
         self._build_ui()
         self.bind("<Configure>", self._schedule_responsive_layout)
@@ -635,17 +863,17 @@ class App(tk.Tk):
                 fh.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] {label}\n")
                 fh.write(rendered)
                 fh.write("\n")
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
         try:
             self._append_log(f"[GUI] {label}: {exc_value}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
         try:
             if self._sniffer_grid_status_var is not None:
                 self._sniffer_grid_status_var.set(f"{label}: {exc_value}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
 
     def _report_tk_callback_exception(self, exc_type, exc_value, exc_tb):
         self._write_gui_exception("Tk callback exception", exc_type, exc_value, exc_tb)
@@ -668,7 +896,7 @@ class App(tk.Tk):
                     # F12: iniciar / detener
                     self.after(0, self._toggle_bot)
             except Exception as e:
-                print(f"[HOTKEY] Error en listener: {e}")
+                _log.info(f"[HOTKEY] Error en listener: {e}")
         listener = kb.Listener(on_press=on_press)
         listener.daemon = True
         listener.start()
@@ -719,18 +947,67 @@ class App(tk.Tk):
             cursor="hand2", state=state,
         )
 
+        # Animación suave de hover: interpola bg entre palette["bg"] y palette["hover"]
+        # en `steps` frames de ~16ms (≈95ms total). Cancela transiciones pendientes.
+        HOVER_STEPS = 6
+        FRAME_MS = 16
+
+        def _animate_hover(target: str, start: str):
+            # Reset animation id
+            prev = getattr(btn, "_hover_after_id", None)
+            if prev is not None:
+                try:
+                    btn.after_cancel(prev)
+                except Exception as _exc:
+                    _log.debug("[gui] except Exception swallowed: %r", _exc)
+            btn._hover_after_id = None
+
+            def _step(i: int):
+                if str(btn["state"]) == "disabled":
+                    return
+                t = i / HOVER_STEPS
+                try:
+                    btn.configure(bg=_lerp_color(start, target, t))
+                except Exception:
+                    return
+                if i < HOVER_STEPS:
+                    btn._hover_after_id = btn.after(FRAME_MS, _step, i + 1)
+                else:
+                    btn._hover_after_id = None
+
+            _step(1)
+
         def _on_enter(_e):
             if str(btn["state"]) == "disabled":
                 return
-            btn.configure(bg=palette["hover"])
+            try:
+                current = btn.cget("bg")
+            except Exception:
+                current = palette["bg"]
+            _animate_hover(palette["hover"], current)
 
         def _on_leave(_e):
             if str(btn["state"]) == "disabled":
                 return
-            btn.configure(bg=palette["bg"])
+            try:
+                current = btn.cget("bg")
+            except Exception:
+                current = palette["hover"]
+            _animate_hover(palette["bg"], current)
+
+        def _on_press(_e):
+            if str(btn["state"]) == "disabled":
+                return
+            # Flash de "pressed" instantáneo para feedback táctil
+            try:
+                btn.configure(bg=palette["active"])
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
 
         btn.bind("<Enter>", _on_enter)
         btn.bind("<Leave>", _on_leave)
+        btn.bind("<ButtonPress-1>", _on_press)
+        btn.bind("<ButtonRelease-1>", _on_enter)
         # Guardar paleta para que enable/disable refresque correctamente
         btn._pill_palette = palette
         return btn
@@ -775,13 +1052,13 @@ class App(tk.Tk):
         if prev is not None:
             try:
                 widget.after_cancel(prev)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
         def _clear():
             try:
                 widget.config(text="")
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
             widget._flash_after_id = None
         widget._flash_after_id = widget.after(duration_ms, _clear)
 
@@ -851,8 +1128,8 @@ class App(tk.Tk):
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
 
         # Notebook — tabs compactas con underline accent
         style.configure("Pro.TNotebook",
@@ -931,6 +1208,198 @@ class App(tk.Tk):
         style.map("Dark.TNotebook.Tab",
                   background=[("selected", BG_BASE), ("active", BG_SUBTLE)],
                   foreground=[("selected", TEXT_PRIMARY), ("active", TEXT_SECONDARY)])
+
+    # ── Tab transition animation ─────────────────────────────────────────
+    def _measure_selected_tab_bounds(self):
+        """Estima (x, y, width) del tab seleccionado escaneando notebook.identify.
+
+        ttk.Notebook no expone bbox de tabs. Escaneamos horizontalmente a una
+        altura fija dentro del tab bar y detectamos dónde cambia el índice.
+        Devuelve (x, y_bottom, width) o None si falla.
+        """
+        nb = getattr(self, "_notebook", None)
+        if nb is None:
+            return None
+        try:
+            total_width = nb.winfo_width()
+            if total_width <= 4:
+                return None
+            current = nb.index("current")
+        except Exception:
+            return None
+
+        # y de muestreo: ~15px dentro del tab bar (padding vertical ~8 + font)
+        probe_y = 14
+        # tab_bottom aproximado: font_size + padding (9*1.5 + 16 ≈ 30)
+        tab_bottom = 30
+        start_x = None
+        end_x = None
+        step = 4  # resolución del scan
+        for x in range(0, total_width, step):
+            try:
+                elem = nb.identify(x, probe_y)
+                if not elem:
+                    if start_x is not None and end_x is None:
+                        end_x = x
+                        break
+                    continue
+                idx = nb.index(f"@{x},{probe_y}")
+            except tk.TclError:
+                continue
+            if idx == current:
+                if start_x is None:
+                    start_x = x
+                end_x = x
+        if start_x is None or end_x is None or end_x <= start_x:
+            return None
+        return (start_x, tab_bottom, max(12, end_x - start_x + step))
+
+    def _position_tab_indicator(self):
+        """Posiciona el indicador sin animación (primer render / resize)."""
+        indicator = getattr(self, "_tab_indicator", None)
+        if indicator is None:
+            return
+        bounds = self._measure_selected_tab_bounds()
+        if bounds is None:
+            # Reintentar luego
+            self.after(200, self._position_tab_indicator)
+            return
+        x, y, w = bounds
+        try:
+            indicator.place(x=x, y=y - 2, width=w, height=2)
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+    def _on_tab_changed(self, event):
+        """Animación: desliza el indicador al nuevo tab + ripple en el content."""
+        indicator = getattr(self, "_tab_indicator", None)
+        if indicator is None:
+            return
+        bounds = self._measure_selected_tab_bounds()
+        if bounds is None:
+            self.after(100, self._position_tab_indicator)
+        else:
+            target_x, target_y, target_w = bounds
+            self._animate_tab_indicator(target_x, target_y - 2, target_w)
+
+        # Ripple en el contenido: un flash brand que se desliza de izq→der
+        try:
+            nb = event.widget
+            tab_widget = nb.nametowidget(nb.select())
+            self._ripple_tab_content(tab_widget)
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+    def _animate_tab_indicator(self, tx: int, ty: int, tw: int,
+                                duration_ms: int = 220, steps: int = 12):
+        """Interpola x/width/y del indicador con easing out."""
+        indicator = self._tab_indicator
+        # Cancelar animación previa
+        prev = getattr(self, "_tab_indicator_after_id", None)
+        if prev is not None:
+            try:
+                self.after_cancel(prev)
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
+            self._tab_indicator_after_id = None
+
+        # Estado actual
+        try:
+            info = indicator.place_info()
+            cur_x = int(info.get("x", tx) or tx)
+            cur_w = int(info.get("width", tw) or tw)
+            cur_y = int(info.get("y", ty) or ty)
+        except Exception:
+            cur_x, cur_w, cur_y = tx, tw, ty
+
+        # Si el indicador no estaba visible, colocarlo directo
+        if cur_w <= 4:
+            try:
+                indicator.place(x=tx, y=ty, width=tw, height=2)
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
+            return
+
+        frame_ms = max(8, duration_ms // steps)
+
+        def _ease_out_cubic(t: float) -> float:
+            return 1 - (1 - t) ** 3
+
+        def _step(i: int):
+            t = _ease_out_cubic(i / steps)
+            x = cur_x + (tx - cur_x) * t
+            w = cur_w + (tw - cur_w) * t
+            y = cur_y + (ty - cur_y) * t
+            try:
+                indicator.place(x=int(x), y=int(y), width=int(w), height=2)
+            except Exception:
+                return
+            if i < steps:
+                self._tab_indicator_after_id = self.after(frame_ms, _step, i + 1)
+            else:
+                self._tab_indicator_after_id = None
+
+        _step(1)
+
+    def _ripple_tab_content(self, tab_frame, duration_ms: int = 260,
+                             steps: int = 14):
+        """Efecto de 'wipe' brand que barre el tope del contenido al cambiar tab."""
+        if tab_frame is None:
+            return
+        try:
+            tab_frame.update_idletasks()
+            total_w = tab_frame.winfo_width()
+            if total_w <= 10:
+                return
+        except Exception:
+            return
+
+        # Ripple: un frame brand de altura 2px que empieza con width=0 en x=0,
+        # crece hasta full width, luego se desvanece (altura reduciendo a 0).
+        ripple = tk.Frame(tab_frame, bg=BRAND, height=2, bd=0, highlightthickness=0)
+        try:
+            ripple.place(x=0, y=0, width=0, height=2)
+        except Exception:
+            return
+
+        frame_ms = max(8, duration_ms // steps)
+        phase_half = steps // 2
+
+        def _ease_out(t: float) -> float:
+            return 1 - (1 - t) ** 2
+
+        def _step(i: int):
+            if i <= phase_half:
+                # Fase 1: expandir de 0 a full width
+                t = _ease_out(i / phase_half)
+                w = int(total_w * t)
+                try:
+                    ripple.place(x=0, y=0, width=w, height=2)
+                except Exception as _exc:
+                    _log.debug("[gui] except Exception swallowed: %r", _exc)
+            else:
+                # Fase 2: reducir altura y deslizar a la derecha (fade-out visual)
+                j = (i - phase_half) / max(1, steps - phase_half)
+                new_x = int(total_w * j * 0.5)
+                new_w = max(0, int(total_w - new_x))
+                h = max(0, int(2 * (1 - j)))
+                try:
+                    ripple.place(x=new_x, y=0, width=new_w, height=h)
+                except Exception as _exc:
+                    _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+            if i < steps:
+                try:
+                    tab_frame.after(frame_ms, _step, i + 1)
+                except Exception as _exc:
+                    _log.debug("[gui] except Exception swallowed: %r", _exc)
+            else:
+                try:
+                    ripple.destroy()
+                except Exception as _exc:
+                    _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+        _step(1)
 
     def _collapsible_section(self, parent, title, start_collapsed=False):
         """Crea una seccion colapsable con chevron + hover. Devuelve (header_frame, content_frame)."""
@@ -1161,6 +1630,9 @@ class App(tk.Tk):
         wordmark.pack(side="left", padx=(SP_2, 0))
         tk.Label(wordmark, text="Dofus Autofarm", bg=BG_SUBTLE, fg=TEXT_PRIMARY,
                  font=(FONT_FAMILY, 11, "bold")).pack(anchor="w")
+        # Subtítulo técnico discreto (aporta contexto sin robar atención).
+        tk.Label(wordmark, text="Retro 1.29.1 · sniffer + visual",
+                 bg=BG_SUBTLE, fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(anchor="w")
 
         # ── Columna central: status pill ─────────────────────────────────
         center = tk.Frame(inner, bg=BG_SUBTLE)
@@ -1209,32 +1681,69 @@ class App(tk.Tk):
         self._set_pill_state(self.btn_pause, enabled=False, variant="secondary")
         self.btn_pause.pack(side="left")
 
-        # Hint sutil de hotkeys — sólo visible en layouts anchos
-        self._hotkey_hint = tk.Label(center, text="F12 · F8 · F10",
+        # Tooltips con hotkeys en los propios botones — elimina el texto suelto
+        # "F12 · F8 · F10" que competía con el status pill.
+        _Tooltip.attach(self.btn_toggle, "Iniciar bot  ·  F12")
+        _Tooltip.attach(self.btn_pause,  "Pausar / Reanudar  ·  F8")
+
+        # Se conserva el widget _hotkey_hint para compatibilidad con el código
+        # existente que lo oculta/muestra en resize — pero sin texto visible.
+        self._hotkey_hint = tk.Label(center, text="",
                                       bg=BG_SUBTLE, fg=TEXT_TERTIARY, font=FONT_CAPTION)
         self._hotkey_hint.pack(side="left", padx=(SP_3, 0))
 
         # ── Notebook (Pro.TNotebook + estilo Dark.TNotebook ya definidos) ──
-        notebook = ttk.Notebook(self, style="Pro.TNotebook")
+        # Usamos un contenedor wrapper para poder superponer el indicador animado
+        # (una barra fina brand que se desliza bajo la pestaña activa).
+        nb_wrapper = tk.Frame(self, bg=BG_BASE)
+        nb_wrapper.pack(fill="both", expand=True, padx=0, pady=0)
+        self._nb_wrapper = nb_wrapper
+
+        notebook = ttk.Notebook(nb_wrapper, style="Pro.TNotebook")
         self._notebook = notebook
         notebook.pack(fill="both", expand=True, padx=0, pady=0)
+
+        # Indicador animado (underline) posicionado via place() sobre el notebook
+        self._tab_indicator = tk.Frame(nb_wrapper, bg=BRAND, height=2,
+                                        highlightthickness=0, bd=0)
+        # Empieza oculto; se coloca tras primer render + en cada cambio de tab
+        self._tab_indicator_after_id = None
+        self._tab_indicator_target = None
+        notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed, add="+")
+        notebook.bind("<Configure>",
+                      lambda _e: self.after(80, self._position_tab_indicator), add="+")
+        # Posicionar tras primer layout
+        self.after(250, self._position_tab_indicator)
         self.bind_all("<MouseWheel>", self._handle_global_mousewheel, add="+")
         self.bind_all("<Button-4>", self._handle_global_mousewheel, add="+")
         self.bind_all("<Button-5>", self._handle_global_mousewheel, add="+")
 
-        # ── Pestaña 1: Farming ───────────────────────────────────────────
+        # ── Pestaña Dashboard (landing view — métricas live) ─────────────
+        # Primera tab del notebook, seleccionada por default al abrir la app.
+        # Usa build_dashboard_tab() del módulo gui_dashboard; le pasamos el
+        # namespace de tokens (self + este módulo tienen las constantes
+        # BG, PANEL, FONT_*, etc definidas arriba) y un getter de estado
+        # que consolida bot + metrics en un dict simple.
+        dashboard_tab = tk.Frame(notebook, bg=BG)
+        notebook.add(dashboard_tab, text="Dashboard")
+        self._dashboard_tab = dashboard_tab
+        self._dashboard_refresh = build_dashboard_tab(
+            dashboard_tab,
+            tokens=_DashboardTokens,
+            get_bot_state=self._collect_dashboard_state,
+        )
+
+        # ── Pestaña Farming (re-introducida 2026-04-25 con foco minero) ─
+        # Ya no se basa en templates de sprites; usa map_data + sniffer
+        # (interactive_object_id + GDF state) para detectar recursos en
+        # tiempo real y aprende interactive_id → template_id automáticamente
+        # vía el packet OAK al recolectar.
         _, farm_body = self._make_scrollable_tab(notebook, "Farming")
+        self._build_farming_tab(farm_body)
 
-        use_sprite_fallback = self.config_data.get("farming", {}).get("use_sprite_fallback", False)
-
-        _, cnt = self._collapsible_section(farm_body, "Nodos por Mapa (Sniffer)")
-        self.resource_nodes_frame = tk.Frame(cnt, bg=PANEL)
-        self.resource_nodes_frame.pack(fill="x")
+        # Frames legacy (siguen creados pero ocultos para no romper refs):
+        self.resource_nodes_frame = tk.Frame(self, bg=PANEL)
         self._refresh_resource_nodes_editor()
-
-        self._sep(farm_body)
-
-        # Secciones ocultas (instanciadas pero no visibles en UI)
         self.resources_frame = tk.Frame(self, bg=PANEL)
         self._refresh_resources()
         self.ui_check_frame = tk.Frame(self, bg=PANEL)
@@ -1273,6 +1782,12 @@ class App(tk.Tk):
         self._build_controls(ajustes_body)
 
         # Status bar inferior removida — el estado vive en el pill del header.
+
+        # Dashboard como tab seleccionada por default al abrir la app.
+        try:
+            notebook.select(self._dashboard_tab)
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
 
     def _build_resources(self, parent):
         self.resources_frame = tk.Frame(parent, bg=PANEL)
@@ -1329,8 +1844,8 @@ class App(tk.Tk):
                         photo = ImageTk.PhotoImage(img)
                         self.resource_images[key] = photo
                         tk.Label(row, image=photo, bg=PANEL).pack(side="left", padx=(0, 6))
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _log.debug("[gui] except Exception swallowed: %r", _exc)
 
                     tk.Label(row, text=res_name, bg=PANEL, fg=TEXT,
                              font=("Segoe UI", 10)).pack(side="left")
@@ -1748,8 +2263,8 @@ class App(tk.Tk):
         if self._responsive_after_id is not None:
             try:
                 self.after_cancel(self._responsive_after_id)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
         self._responsive_after_id = self.after(80, self._apply_responsive_layout)
 
     def _apply_responsive_layout(self):
@@ -2108,6 +2623,471 @@ class App(tk.Tk):
 
         threading.Thread(target=run, daemon=True).start()
 
+    # ============================================================ Farming ==
+    def _build_farming_tab(self, parent):
+        """Pestaña Farming basada en sniffer + map_data (sin templates).
+
+        Layout:
+          1. Header — map_id actual + estado del sniffer + botón refresh
+          2. Recursos detectados — Treeview live: cell, interactive_id,
+             nombre aprendido, estado
+          3. Aprendizajes — tabla editable interactive_id → nombre
+          4. Profesiones — toggles enabled/disabled
+        """
+        # ── Botones principales: HABILITAR + Capturar template ──
+        toggle_row = tk.Frame(parent, bg=BG)
+        toggle_row.pack(fill="x", pady=(SP_2, SP_3))
+        self._farm_toggle_btn = self._make_pill_button(
+            toggle_row,
+            "Habilitar Farming",
+            command=self._on_toggle_smart_farming,
+            variant="primary",
+            size="lg",
+        )
+        self._farm_toggle_btn.pack(side="left")
+        self._make_pill_button(
+            toggle_row,
+            "📷 Capturar template",
+            command=self._on_farm_capture_template,
+            variant="ghost",
+            size="lg",
+        ).pack(side="left", padx=(SP_2, 0))
+        self._farm_state_var = tk.StringVar(value="Desactivado")
+        tk.Label(
+            toggle_row, textvariable=self._farm_state_var,
+            bg=BG, fg=TEXT_SECONDARY, font=FONT_BODY_BOLD,
+        ).pack(side="left", padx=(SP_3, 0))
+        # Aplicar visual inicial según estado en config
+        self._update_farm_toggle_visual()
+
+        # ── Encabezado con info del mapa ──
+        header = tk.Frame(parent, bg=BG)
+        header.pack(fill="x", pady=(SP_2, SP_3))
+        tk.Label(header, text="Map ID:", bg=BG, fg=TEXT_TERTIARY,
+                 font=FONT_LABEL).pack(side="left")
+        self._farm_map_id_var = tk.StringVar(value="—")
+        tk.Label(header, textvariable=self._farm_map_id_var, bg=BG,
+                 fg=TEXT_PRIMARY, font=FONT_TITLE).pack(side="left", padx=(SP_2, SP_4))
+        tk.Label(header, text="Recursos:", bg=BG, fg=TEXT_TERTIARY,
+                 font=FONT_LABEL).pack(side="left")
+        self._farm_count_var = tk.StringVar(value="0")
+        tk.Label(header, textvariable=self._farm_count_var, bg=BG,
+                 fg=BRAND, font=FONT_TITLE).pack(side="left", padx=(SP_2, SP_4))
+        tk.Label(header, text="Aprendidos:", bg=BG, fg=TEXT_TERTIARY,
+                 font=FONT_LABEL).pack(side="left")
+        self._farm_learned_var = tk.StringVar(value="0")
+        tk.Label(header, textvariable=self._farm_learned_var, bg=BG,
+                 fg=SUCCESS, font=FONT_TITLE).pack(side="left", padx=(SP_2, 0))
+
+        # ── Tabla de recursos detectados en este mapa ──
+        _, res_cnt = self._collapsible_section(
+            parent, "Recursos detectados (sniffer + map_data)"
+        )
+        cols = ("cell", "iid", "name", "tmpl", "state")
+        self._farm_resources_tree = ttk.Treeview(
+            res_cnt, columns=cols, show="headings", height=10,
+            style="Pro.Treeview",
+        )
+        for col, label, w, anchor in (
+            ("cell", "Cell", 60, "center"),
+            ("iid",  "Interactive ID", 110, "center"),
+            ("name", "Nombre",   180, "w"),
+            ("tmpl", "Template", 90, "center"),
+            ("state","Estado",   90, "center"),
+        ):
+            self._farm_resources_tree.heading(col, text=label)
+            self._farm_resources_tree.column(col, width=w, anchor=anchor)
+        self._farm_resources_tree.pack(fill="x", pady=SP_1)
+
+        self._sep(parent)
+
+        # ── Tabla de aprendizajes (interactive_id → nombre) ──
+        _, learn_cnt = self._collapsible_section(
+            parent, "Aprendizajes (interactive_id → recurso)"
+        )
+        info_lbl = tk.Label(
+            learn_cnt,
+            text=("Cada interactive_id se vincula a un template_id la primera vez "
+                  "que minás algo (vía packet OAK). Doble-click sobre 'Nombre' para "
+                  "renombrarlo (ej: recurso_7520 → Hierro)."),
+            bg=BG, fg=TEXT_SECONDARY, font=FONT_CAPTION,
+            wraplength=700, justify="left",
+        )
+        info_lbl.pack(fill="x", pady=(0, SP_2))
+        cols2 = ("iid", "name", "tmpl", "first_map", "qty")
+        self._farm_learn_tree = ttk.Treeview(
+            learn_cnt, columns=cols2, show="headings", height=8,
+            style="Pro.Treeview",
+        )
+        for col, label, w, anchor in (
+            ("iid",       "Interactive ID", 110, "center"),
+            ("name",      "Nombre",         200, "w"),
+            ("tmpl",      "Template ID",     90, "center"),
+            ("first_map", "1er map",         80, "center"),
+            ("qty",       "Última qty",      80, "center"),
+        ):
+            self._farm_learn_tree.heading(col, text=label)
+            self._farm_learn_tree.column(col, width=w, anchor=anchor)
+        self._farm_learn_tree.pack(fill="x", pady=SP_1)
+        self._farm_learn_tree.bind("<Double-1>", self._on_farm_learn_double_click)
+
+        self._sep(parent)
+
+        # ── Profesiones (enable/disable) ──
+        _, prof_cnt = self._collapsible_section(parent, "Profesiones")
+        self._farm_prof_vars: dict[str, tk.BooleanVar] = {}
+        prof_cfg = (self.config_data.get("farming") or {}).get("professions") or {}
+        if not prof_cfg:
+            tk.Label(prof_cnt, text="(Sin profesiones configuradas)", bg=BG,
+                     fg=TEXT_TERTIARY, font=FONT_CAPTION).pack(anchor="w")
+        else:
+            for pname in sorted(prof_cfg.keys()):
+                pcfg = prof_cfg[pname] or {}
+                var = tk.BooleanVar(value=bool(pcfg.get("enabled", False)))
+                self._farm_prof_vars[pname] = var
+                row = tk.Frame(prof_cnt, bg=BG)
+                row.pack(fill="x", pady=2)
+                cb = tk.Checkbutton(
+                    row, variable=var, bg=BG, activebackground=BG,
+                    fg=TEXT_PRIMARY, selectcolor=BG_ELEVATED,
+                    command=lambda n=pname: self._on_farm_profession_toggle(n),
+                )
+                cb.pack(side="left")
+                tk.Label(row, text=pname, bg=BG, fg=TEXT_PRIMARY,
+                         font=FONT_BODY_BOLD).pack(side="left", padx=(SP_1, SP_3))
+                resources = pcfg.get("resources") or []
+                wait_s = pcfg.get("collect_min_wait", "—")
+                summary = f"{len(resources)} recursos · espera {wait_s}s"
+                tk.Label(row, text=summary, bg=BG, fg=TEXT_TERTIARY,
+                         font=FONT_CAPTION).pack(side="left")
+
+        # Refresh inicial + setup de polling
+        self._farm_last_refresh_at = 0.0
+        self._refresh_farming_tab()
+
+    def _refresh_farming_tab(self) -> None:
+        """Recarga las tablas con datos del bot. Throttled vía _poll_queue."""
+        if not hasattr(self, "_farm_resources_tree"):
+            return
+        bot = getattr(getattr(self, "bot_thread", None), "bot", None)
+        # Map id
+        if bot is not None:
+            map_id = getattr(bot, "_current_map_id", None)
+            self._farm_map_id_var.set(str(map_id) if map_id is not None else "—")
+        else:
+            self._farm_map_id_var.set("—")
+
+        # Estado del state machine smart farming (si activo)
+        if hasattr(self, "_farm_state_var") and bot is not None:
+            sm = getattr(bot, "_smart_farm", None)
+            if sm is not None and sm.is_active():
+                summary = sm.status_summary()
+                state_label = summary.get("state", "?")
+                target_cell = summary.get("target_cell")
+                collected = summary.get("collected", 0)
+                target_str = f" · target cell={target_cell}" if target_cell else ""
+                self._farm_state_var.set(
+                    f"● Activo — {state_label}{target_str} · {collected} cosechados"
+                )
+
+        # Resources detected — TODOS (con estado etiquetado: disponible /
+        # agotado / cerrado / desconocido). Mucho más informativo que filtrar
+        # solo los disponibles.
+        try:
+            self._farm_resources_tree.delete(*self._farm_resources_tree.get_children())
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+        all_nodes: list = []
+        avail_count = 0
+        if bot is not None:
+            try:
+                all_nodes = bot._scan_all_resource_nodes() or []
+            except Exception:
+                all_nodes = []
+        # Mapeo state code → (label, tag de color)
+        state_labels = {
+            4: ("disponible", "available"),
+            2: ("ocupado",    "busy"),
+            3: ("agotado",    "depleted"),
+            5: ("cerrado",    "closed"),
+            None: ("¿?",      "unknown_state"),
+        }
+        for n in all_nodes:
+            iid = n.get("interactive_id")
+            tmpl = n.get("template_id")
+            name = n.get("name") or "?"
+            state = n.get("state")
+            label, color_tag = state_labels.get(state, (str(state), "unknown_state"))
+            if state == 4:
+                avail_count += 1
+            # Tag combinado: color por estado + cursivas si template desconocido
+            tag = color_tag if tmpl else f"{color_tag}_unknown_tmpl"
+            self._farm_resources_tree.insert(
+                "", "end",
+                values=(n["cell_id"], iid, name,
+                        tmpl if tmpl else "—",
+                        label),
+                tags=(tag,),
+            )
+        # Mostrar "X disponibles / Y total" en el contador
+        self._farm_count_var.set(f"{avail_count} / {len(all_nodes)}")
+        try:
+            # Colores por estado
+            self._farm_resources_tree.tag_configure("available",  foreground=SUCCESS)
+            self._farm_resources_tree.tag_configure("busy",       foreground=WARNING)
+            self._farm_resources_tree.tag_configure("depleted",   foreground=DANGER)
+            self._farm_resources_tree.tag_configure("closed",     foreground=TEXT_TERTIARY)
+            self._farm_resources_tree.tag_configure("unknown_state", foreground=TEXT_SECONDARY)
+            # Para los con template desconocido, mismo color pero podríamos
+            # diferenciar — por ahora reutilizamos
+            self._farm_resources_tree.tag_configure("available_unknown_tmpl", foreground=SUCCESS)
+            self._farm_resources_tree.tag_configure("busy_unknown_tmpl",      foreground=WARNING)
+            self._farm_resources_tree.tag_configure("depleted_unknown_tmpl",  foreground=DANGER)
+            self._farm_resources_tree.tag_configure("closed_unknown_tmpl",    foreground=TEXT_TERTIARY)
+            self._farm_resources_tree.tag_configure("unknown_state_unknown_tmpl", foreground=TEXT_SECONDARY)
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+        # Learned mappings
+        try:
+            self._farm_learn_tree.delete(*self._farm_learn_tree.get_children())
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+        rmap = (self.config_data.get("farming") or {}).get("resource_id_map") or {}
+        # Sync from runtime if bot has more recent learnings
+        if bot is not None:
+            runtime_map = (bot.config.get("farming") or {}).get("resource_id_map") or {}
+            for k, v in runtime_map.items():
+                if k not in rmap:
+                    rmap[k] = v
+        self._farm_learned_var.set(str(len(rmap)))
+        for iid_str, info in sorted(rmap.items(), key=lambda kv: int(kv[0]) if str(kv[0]).isdigit() else 9999):
+            info = info or {}
+            self._farm_learn_tree.insert(
+                "", "end",
+                iid=iid_str,
+                values=(
+                    iid_str,
+                    info.get("name", "—"),
+                    info.get("template_id", "—"),
+                    info.get("first_learned_map_id", "—"),
+                    info.get("last_qty", "—"),
+                ),
+            )
+
+    def _on_farm_learn_double_click(self, event) -> None:
+        """Doble-click sobre una fila de aprendizaje → renombrar."""
+        item = self._farm_learn_tree.identify_row(event.y)
+        if not item:
+            return
+        col = self._farm_learn_tree.identify_column(event.x)
+        # Solo permitir editar la columna Nombre (#2)
+        if col != "#2":
+            return
+        iid_str = self._farm_learn_tree.item(item, "iid") or self._farm_learn_tree.item(item, "values")[0]
+        cur_name = self._farm_learn_tree.item(item, "values")[1]
+        new_name = simpledialog.askstring(
+            "Renombrar recurso",
+            f"Nuevo nombre para interactive_id={iid_str}:",
+            initialvalue=cur_name,
+            parent=self,
+        )
+        if not new_name:
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            return
+        farming = self.config_data.setdefault("farming", {})
+        rmap = farming.setdefault("resource_id_map", {})
+        entry = rmap.setdefault(str(iid_str), {})
+        entry["name"] = new_name
+        save_config(self.config_data)
+        self._sync_runtime_bot_config()
+        self._refresh_farming_tab()
+        try:
+            self._append_log(f"[FARM] Renombrado interactive_id={iid_str} → {new_name!r}")
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+    def _on_farm_capture_template(self) -> None:
+        """Abre ResourceCaptureWindow para capturar un sprite de recurso.
+
+        Pre-fill inteligente:
+          * Si hay una fila seleccionada en "Aprendizajes" o "Recursos
+            detectados", usa su `name` como nombre por default y la
+            profesión enabled como destino.
+          * Si no, pide al usuario nombre/profesión vía diálogo.
+
+        El template se guarda en assets/templates/resources/{Profesion}/{name}.png
+        y se vincula al interactive_id en farming.resource_id_map (si la
+        captura proviene de una fila del aprendizaje).
+        """
+        # 1. Determinar profesión destino
+        profs_cfg = (self.config_data.get("farming") or {}).get("professions") or {}
+        enabled_profs = [p for p, c in profs_cfg.items() if (c or {}).get("enabled")]
+        profession = None
+        if len(enabled_profs) == 1:
+            profession = enabled_profs[0]
+        elif len(enabled_profs) > 1:
+            # Diálogo para elegir
+            from tkinter import simpledialog
+            msg = "Profesiones habilitadas:\n  " + "\n  ".join(enabled_profs) + "\n\nElige profesión:"
+            profession = simpledialog.askstring(
+                "Profesión", msg, initialvalue=enabled_profs[0], parent=self,
+            )
+            if not profession or profession not in profs_cfg:
+                return
+        else:
+            # Ninguna habilitada — pedir nombre nuevo
+            profession = simpledialog.askstring(
+                "Profesión",
+                "No hay profesiones habilitadas. Nombre de profesión nueva (ej: Minero):",
+                initialvalue="Minero", parent=self,
+            )
+            if not profession:
+                return
+            profession = profession.strip()
+
+        # 2. Pre-fill nombre desde fila seleccionada (aprendizaje o recursos)
+        prefilled_name = ""
+        prefilled_iid: int | None = None
+        try:
+            sel = self._farm_learn_tree.selection()
+            if sel:
+                vals = self._farm_learn_tree.item(sel[0], "values")
+                # vals = (iid, name, tmpl, first_map, qty)
+                if len(vals) >= 2:
+                    prefilled_iid = int(vals[0]) if str(vals[0]).isdigit() else None
+                    cur_name = str(vals[1])
+                    # Si name es genérico (recurso_NNNN), no pre-llenar
+                    if cur_name and not cur_name.startswith("recurso_"):
+                        prefilled_name = cur_name
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+        if not prefilled_name:
+            try:
+                sel2 = self._farm_resources_tree.selection()
+                if sel2:
+                    vals = self._farm_resources_tree.item(sel2[0], "values")
+                    # vals = (cell, iid, name, tmpl, state)
+                    if len(vals) >= 3:
+                        prefilled_iid = int(vals[1]) if str(vals[1]).isdigit() else None
+                        cur_name = str(vals[2])
+                        if cur_name and not cur_name.startswith("recurso_"):
+                            prefilled_name = cur_name
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+        # 3. Setup save dir
+        save_dir = os.path.join(RESOURCES_DIR, profession)
+        os.makedirs(save_dir, exist_ok=True)
+
+        # 4. Callback: tras guardar, actualizar config + reload
+        def _on_template_saved(name: str) -> None:
+            # Agregar a la lista de resources de la profesión
+            farming = self.config_data.setdefault("farming", {})
+            profs = farming.setdefault("professions", {})
+            pcfg = profs.setdefault(profession, {})
+            resources = pcfg.setdefault("resources", [])
+            if name not in resources:
+                resources.append(name)
+            # Vincular al interactive_id si corresponde
+            if prefilled_iid is not None:
+                rmap = farming.setdefault("resource_id_map", {})
+                entry = rmap.setdefault(str(prefilled_iid), {})
+                entry["name"] = name
+                entry["template_profession"] = profession
+            save_config(self.config_data)
+            self._sync_runtime_bot_config()
+            self._refresh_farming_tab()
+            try:
+                self._append_log(
+                    f"[FARM] Template capturado: {profession}/{name}.png" +
+                    (f" (vinculado a iid={prefilled_iid})" if prefilled_iid else "")
+                )
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
+            messagebox.showinfo(
+                "Template guardado",
+                f"'{name}' guardado en {profession}/.\n"
+                f"{'Vinculado a interactive_id=' + str(prefilled_iid) if prefilled_iid else 'Vinculado por nombre.'}",
+                parent=self,
+            )
+
+        # 5. Abrir ResourceCaptureWindow
+        monitor_idx = int((self.config_data.get("gui") or {}).get("monitor_index", 1) or 1)
+        win = ResourceCaptureWindow(
+            self,
+            monitor_index=monitor_idx,
+            on_saved=_on_template_saved,
+            save_dir=save_dir,
+        )
+        # Si pre-rellenamos un nombre, sustituir el initialvalue del dialog
+        # (no se puede hacer directo porque el dialog se abre dentro de
+        # ResourceCaptureWindow). Workaround: monkeypatch askstring para
+        # usar el nombre pre-llenado.
+        if prefilled_name:
+            from tkinter import simpledialog as _sd
+            orig = _sd.askstring
+            def _patched(title, prompt, **kwargs):
+                kwargs["initialvalue"] = prefilled_name
+                _sd.askstring = orig  # restore tras primer uso
+                return orig(title, prompt, **kwargs)
+            _sd.askstring = _patched
+
+    def _on_toggle_smart_farming(self) -> None:
+        """Habilita/deshabilita el state machine de farming sniffer-only.
+
+        Setea farming.smart_farming_enabled. El bot lo respeta en su tick()
+        y delega al SmartFarmingMachine cuando es True.
+        """
+        farming = self.config_data.setdefault("farming", {})
+        cur = bool(farming.get("smart_farming_enabled", False))
+        farming["smart_farming_enabled"] = not cur
+        save_config(self.config_data)
+        self._sync_runtime_bot_config()
+        self._update_farm_toggle_visual()
+        new_state = "ACTIVADO" if not cur else "DESACTIVADO"
+        try:
+            self._append_log(f"[FARM] Smart farming {new_state}")
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+    def _update_farm_toggle_visual(self) -> None:
+        """Actualiza el botón y label según el estado actual."""
+        if not hasattr(self, "_farm_toggle_btn"):
+            return
+        farming = self.config_data.get("farming") or {}
+        active = bool(farming.get("smart_farming_enabled", False))
+        try:
+            if active:
+                self._farm_toggle_btn.configure(text="Detener Farming")
+                self._set_pill_state(self._farm_toggle_btn, enabled=True, variant="danger")
+                self._farm_state_var.set("● Activo — recolectando automáticamente")
+            else:
+                self._farm_toggle_btn.configure(text="Habilitar Farming")
+                self._set_pill_state(self._farm_toggle_btn, enabled=True, variant="primary")
+                self._farm_state_var.set("○ Desactivado")
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+    def _on_farm_profession_toggle(self, prof_name: str) -> None:
+        var = self._farm_prof_vars.get(prof_name)
+        if var is None:
+            return
+        farming = self.config_data.setdefault("farming", {})
+        profs = farming.setdefault("professions", {})
+        pcfg = profs.setdefault(prof_name, {})
+        pcfg["enabled"] = bool(var.get())
+        save_config(self.config_data)
+        self._sync_runtime_bot_config()
+        try:
+            self._append_log(
+                f"[FARM] Profesión {prof_name!r} → enabled={pcfg['enabled']}"
+            )
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
     def _build_navigation_content(self, parent, nav_cfg):
         frame = tk.Frame(parent, bg=PANEL)
         frame.pack(fill="x")
@@ -2373,8 +3353,8 @@ class App(tk.Tk):
         for map_id, direction in sorted(profile.get("route_exit_by_map_id", {}).items(), key=lambda item: str(item[0])):
             try:
                 self._nav_map_route_listbox.insert("end", f"{map_id} -> auto:{str(direction).strip().lower()}")
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
         # Cargar secuencia (modo "route") + loop si existen.
         # Refrescar el cache _nav_seq_data desde el perfil (fuente de verdad
         # para serialización en _save_navigation).
@@ -2404,7 +3384,14 @@ class App(tk.Tk):
             self._set_pill_state(self._nav_route_mode_btn, enabled=True, variant="danger")
 
     def _nav_toggle_route_mode(self):
-        """Activa/desactiva farming.mode='route' usando el perfil seleccionado."""
+        """Activa/desactiva farming.mode='route' usando el perfil seleccionado.
+
+        Al DESACTIVAR, restaura el modo que el usuario tenía antes de activar
+        route (guardado en farming._previous_mode). Si no hay guardado,
+        defaultea a 'leveling' — el usuario con perfiles de combate espera
+        que "apagar route" signifique "seguir peleando mobs en cualquier mapa".
+        Antes caía a 'resource' que deshabilitaba el combate silenciosamente.
+        """
         farming = self.config_data.setdefault("farming", {})
         selected = self._selected_nav_profile_name()
         if not selected:
@@ -2413,9 +3400,19 @@ class App(tk.Tk):
         current_mode = farming.get("mode", "resource")
         current_profile = farming.get("route_profile")
         if current_mode == "route" and current_profile == selected:
-            farming["mode"] = "resource"
-            self._log_nav(f"Modo route DESACTIVADO (perfil {selected!r})")
+            # Deactivating: restore previous mode (default leveling)
+            previous = farming.get("_previous_mode") or "leveling"
+            farming["mode"] = previous
+            farming.pop("_previous_mode", None)
+            self._log_nav(
+                f"Modo route DESACTIVADO (perfil {selected!r}) → "
+                f"modo restaurado: {previous!r}"
+            )
         else:
+            # Activating: remember current mode for restoration later.
+            # Solo guardamos si el modo actual no es 'route' (evitar recursión).
+            if current_mode != "route":
+                farming["_previous_mode"] = current_mode
             farming["mode"] = "route"
             farming["route_profile"] = selected
             self._log_nav(f"Modo route ACTIVADO con perfil {selected!r}")
@@ -2952,13 +3949,13 @@ class App(tk.Tk):
             cx = self_x + (self_w - dw) // 2
             cy = self_y + (self_h - dh) // 2
             dlg.geometry(f"+{max(0, cx)}+{max(0, cy)}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
 
         try:
             dlg.grab_set()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
         dlg.protocol("WM_DELETE_WINDOW", _on_cancel)
         dlg.wait_window()
 
@@ -3795,8 +4792,7 @@ class App(tk.Tk):
             if match is not None and click is not None:
                 match_x, match_y = match
                 abs_x, abs_y = click
-                self.config_data["bot"]["sacrogito_self_pos"] = [abs_x, abs_y]
-                save_config(self.config_data)
+                # sacrogito_self_pos write retirado en limpieza Sadida-only (2026-04-26)
                 self._sync_runtime_bot_config()
                 self.after(0, lambda: self._sacro_pos_lbl.config(
                     text=f"{abs_x}, {abs_y}", fg=GREEN))
@@ -4308,8 +5304,8 @@ class App(tk.Tk):
             try:
                 self._mob_search_entry.focus_set()
                 self._mob_search_entry.icursor(len(search_text))
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
 
     def _clear_mob_search(self):
         self._mob_search_var.set("")
@@ -5125,8 +6121,8 @@ class App(tk.Tk):
         if getattr(self, "_lsq_persist_after", None) is not None:
             try:
                 self.after_cancel(self._lsq_persist_after)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
         self._lsq_persist_after = self.after(500, self._persist_lsq_staging)
 
     def _capture_lsq_row(self, index: int):
@@ -7104,7 +8100,7 @@ class App(tk.Tk):
         save_config(self.config_data)
         self.config_data = load_config()
         self._sync_runtime_bot_config()
-        print(f"[GUI] Tiempo de cosecha {profession}: {wait:.1f}s guardado")
+        _log.info(f"[GUI] Tiempo de cosecha {profession}: {wait:.1f}s guardado")
         self._flash_saved(self._wait_saved_lbl, text=f"✓ {wait:.1f}s guardado")
 
     def _new_profession_from_nodes(self):
@@ -7612,8 +8608,7 @@ class App(tk.Tk):
                 return
 
             match_x, match_y = match
-            self.config_data["bot"]["sacrogito_self_pos"] = [mouse_x, mouse_y]
-            save_config(self.config_data)
+            # sacrogito_self_pos write retirado en limpieza Sadida-only (2026-04-26)
             self._sync_runtime_bot_config()
             self.after(0, lambda: self._sacro_pos_lbl.config(text=f"{mouse_x}, {mouse_y}", fg=GREEN))
             self.log_queue.put((
@@ -7680,7 +8675,220 @@ class App(tk.Tk):
         else:
             messagebox.showinfo("Bot detenido", "Inicia el bot primero para simular la descarga.", parent=self)
 
+    # ------------------------------------------------ Web control --
+    def _handle_web_control(self, action: str) -> dict:
+        """Maneja POST /api/control/{action} — pause/resume/stop del bot.
+
+        Corre en el thread del HTTP handler. Cambios de estado del botthread
+        son thread-safe (toggle boolean). Devuelve dict con `ok` + estado
+        actual para que el front-end pueda refrescar UI sin esperar el poll.
+        """
+        bt = getattr(self, "bot_thread", None)
+        if bt is None or not bt.is_alive():
+            return {"ok": False, "error": "bot no está corriendo",
+                    "action": action, "running": False}
+        try:
+            if action == "pause":
+                if not bt._paused:
+                    bt.pause()   # toggle — ahora queda pausado
+                paused_now = bool(bt._paused)
+                return {"ok": True, "action": "pause",
+                        "running": True, "paused": paused_now}
+            if action == "resume":
+                if bt._paused:
+                    bt.pause()   # toggle — ahora queda activo
+                paused_now = bool(bt._paused)
+                return {"ok": True, "action": "resume",
+                        "running": True, "paused": paused_now}
+            if action == "stop":
+                # stop() marca _running=False; el thread termina en su próximo tick
+                bt.stop()
+                return {"ok": True, "action": "stop",
+                        "running": False, "paused": False}
+            return {"ok": False, "error": f"unknown action {action!r}"}
+        except Exception as exc:
+            return {"ok": False, "error": repr(exc), "action": action}
+
+    # ------------------------------------------------ Notifications --
+    def _on_telemetry_for_notifications(self, record: dict) -> None:
+        """Callback de telemetry.subscribe. Filtra eventos que merecen push.
+
+        Corre en el thread del bot — debe ser rápido (delega a
+        NotificationClient.send que arma su propio thread daemon).
+        """
+        if self._notifier is None or not self._notifier.enabled:
+            return
+        try:
+            kind = record.get("kind")
+            if kind == "pj_died":
+                map_id = record.get("map_id")
+                hp_before = record.get("hp_before")
+                max_hp = record.get("max_hp")
+                cell = record.get("combat_cell")
+                msg = (
+                    f"El PJ murió en map {map_id} "
+                    f"(cell {cell}, HP {hp_before}/{max_hp} → 0)."
+                )
+                self._notifier.send(
+                    title="Dofus Autofarm: muerte del PJ",
+                    message=msg,
+                    priority=5,
+                    tags=["skull", "warning"],
+                )
+            elif kind == "route_stuck_out_of_sequence":
+                map_id = record.get("map_id")
+                elapsed = record.get("elapsed_s", 0)
+                seq = record.get("sequence_maps", [])
+                msg = (
+                    f"Bot stuck en map {map_id} (no está en la ruta) "
+                    f"hace {elapsed}s. Mové el PJ manualmente a un mapa de "
+                    f"la sequence: {seq}."
+                )
+                self._notifier.send(
+                    title="Dofus Autofarm: ruta perdida",
+                    message=msg,
+                    priority=4,
+                    tags=["warning", "compass"],
+                )
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+    # ------------------------------------------------ Dashboard live state --
+    def _collect_dashboard_state(self) -> dict:
+        """Consolida estado del bot + metrics para el dashboard.
+
+        Se llama desde build_dashboard_tab en cada refresh. Lee de manera
+        defensiva — cualquier atributo que no exista devuelve None sin
+        explotar. Si el bot no está corriendo, devuelve estado "detenido".
+
+        Campos relevantes para el minimapa:
+          - map_id: id del mapa actual (lookup en mapas/*.xml)
+          - combat_cell: celda del PJ (marker azul)
+          - enemy_cells: lista de cell_id de enemigos vivos (markers rojos)
+        """
+        st: dict = {
+            "state": None, "sniffer_active": False, "paused": False,
+            "map_id": None, "combat_cell": None,
+            "actor_id": None, "pods_current": None, "pods_max": None,
+            "enemy_cells": [],
+            "hp": None, "max_hp": None,
+            "pa": None, "pm": None, "turn_number": None,
+        }
+        try:
+            st["metrics"] = self._dashboard_metrics.summary() if self._dashboard_metrics else {}
+        except Exception:
+            st["metrics"] = {}
+
+        bt = getattr(self, "bot_thread", None)
+        bot = getattr(bt, "bot", None) if bt is not None else None
+        if bot is None:
+            return st
+        try:
+            st["state"] = getattr(bot, "state", None)
+            st["sniffer_active"] = bool(getattr(bot, "sniffer_active", False))
+            st["paused"] = bool(getattr(bt, "_paused", False))
+            st["map_id"] = getattr(bot, "_current_map_id", None)
+            st["combat_cell"] = getattr(bot, "_combat_cell", None)
+            st["actor_id"] = getattr(bot, "_sniffer_my_actor", None)
+            st["pods_current"] = getattr(bot, "current_pods", None)
+            st["pods_max"] = getattr(bot, "max_pods", None)
+            # PA/PM/turno para UI
+            st["pa"] = getattr(bot, "_sniffer_pa", None)
+            st["pm"] = getattr(bot, "_sniffer_pm", None)
+            st["turn_number"] = getattr(bot, "_combat_turn_number", None)
+            # HP del PJ: priorizar _char_hp que ahora es mirror unificado
+            # de As (out-of-combat) + GTM PJ-entry (in-combat). Este campo
+            # se actualiza en tiempo real cuando el PJ recibe daño o se cura.
+            # Fallback a _fighters[actor].hp por si el bot no trackeó el
+            # mirror aún (primer turno, edge cases).
+            st["hp"] = getattr(bot, "_char_hp", None)
+            if st["hp"] is None:
+                my_actor = st["actor_id"]
+                fighters = getattr(bot, "_fighters", {}) or {}
+                if my_actor and my_actor in fighters:
+                    my_fighter = fighters[my_actor]
+                    if isinstance(my_fighter, dict):
+                        st["hp"] = my_fighter.get("hp")
+            st["max_hp"] = getattr(bot, "_char_max_hp", None)
+            # Enemigos: replicamos la lógica canónica del bot
+            # (_get_enemy_fighter_cells) PLUS un filtro extra por HP<=0.
+            # Razón: instrucción del usuario — una vez que los PDV llegan
+            # a 0, el enemigo está muerto (no existe revive). Pero en
+            # Dofus Retro hay casos donde un GTM trae HP=0 sin que el
+            # flag `alive` se actualice (ej: daño de veneno entre turnos
+            # que el bot procesa en orden raro). El dashboard debe tratar
+            # HP<=0 como muerto sí o sí.
+            my_actor = st["actor_id"]
+            my_team = getattr(bot, "_my_team_id", None)
+            matcher = getattr(bot, "_actor_ids_match", None)
+            fighters = getattr(bot, "_fighters", {}) or {}
+            enemy_cells: list[int] = []
+            for actor_id, fighter in fighters.items():
+                if not isinstance(fighter, dict):
+                    continue
+                # Skip self
+                if my_actor is not None:
+                    try:
+                        if matcher is not None and matcher(actor_id, my_actor):
+                            continue
+                        if matcher is None and str(actor_id).strip() == str(my_actor).strip():
+                            continue
+                    except Exception as _exc:
+                        _log.debug("[gui] except Exception swallowed: %r", _exc)
+                # Skip dead (flag alive)
+                if not fighter.get("alive", True):
+                    continue
+                # Skip dead (HP<=0) — regla del usuario: PDV=0 = muerto
+                hp = fighter.get("hp")
+                if hp is not None:
+                    try:
+                        if int(hp) <= 0:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+                # Es enemigo solo si actor_id < 0 (monstruos) o team diferente
+                is_enemy = False
+                try:
+                    is_enemy = int(actor_id) < 0
+                except (TypeError, ValueError):
+                    pass
+                if not is_enemy and my_team is not None:
+                    f_team = fighter.get("team_id")
+                    if f_team is not None and f_team != my_team:
+                        is_enemy = True
+                if not is_enemy:
+                    continue
+                cid = fighter.get("cell_id")
+                if cid is None:
+                    continue
+                try:
+                    enemy_cells.append(int(cid))
+                except (TypeError, ValueError):
+                    continue
+            st["enemy_cells"] = enemy_cells
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
+        return st
+
     # --------------------------------------------------------- Queue poll --
+    def _collect_game_state_dict(self) -> dict:
+        """F7.C1 — provider para /api/game_state.
+
+        Devuelve `bot.game_state.to_dict(include_timestamps=True)` o {} si
+        el bot no esta corriendo. Se llama por cada GET a /api/game_state.
+        """
+        bt = getattr(self, "bot_thread", None)
+        bot = getattr(bt, "bot", None) if bt is not None else None
+        if bot is None:
+            return {"error": "bot not running"}
+        gs = getattr(bot, "game_state", None)
+        if gs is None:
+            return {"error": "game_state not initialized"}
+        try:
+            return gs.to_dict(include_timestamps=True)
+        except Exception as exc:
+            return {"error": "to_dict failed", "detail": str(exc)}
+
     def _poll_queue(self):
         try:
             while True:
@@ -7761,12 +8969,40 @@ class App(tk.Tk):
             try:
                 if self._sniffer_grid_status_var is not None:
                     self._sniffer_grid_status_var.set(f"Sniffer tab falló: {exc}")
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
             try:
                 self._append_log(f"[GUI] _refresh_sniffer_tab fallo: {exc}")
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+        # Dashboard refresh — throttled a 4 Hz. _poll_queue corre cada 40ms
+        # pero repintar las cards cada tick es waste; 250ms de latencia es
+        # imperceptible para métricas live y baja mucho el CPU de la GUI.
+        _now_dash = time.time()
+        if (self._dashboard_refresh is not None
+                and (_now_dash - self._dashboard_last_refresh_at) >= 0.25):
+            self._dashboard_last_refresh_at = _now_dash
+            try:
+                self._dashboard_refresh()
+            except Exception as _dash_exc:
+                try:
+                    self._append_log(f"[GUI] dashboard refresh falló: {_dash_exc}")
+                except Exception as _exc:
+                    _log.debug("[gui] except Exception swallowed: %r", _exc)
+
+        # Farming tab refresh — throttle 1 Hz (los recursos no cambian
+        # tan seguido como el dashboard).
+        if (hasattr(self, "_farm_last_refresh_at")
+                and (_now_dash - self._farm_last_refresh_at) >= 1.0):
+            self._farm_last_refresh_at = _now_dash
+            try:
+                self._refresh_farming_tab()
+            except Exception as _farm_exc:
+                try:
+                    self._append_log(f"[GUI] farming refresh falló: {_farm_exc}")
+                except Exception as _exc:
+                    _log.debug("[gui] except Exception swallowed: %r", _exc)
 
         self.after(40, self._poll_queue)
 
@@ -7784,8 +9020,11 @@ class App(tk.Tk):
             f"Bot pausado. Niveles={gls} · Slopes={slopes}. {reason}"
         )
         self._deformation_banner_text.set(msg)
-        # Mostrar banner debajo del header (antes del notebook)
-        self._deformation_banner.pack(fill="x", before=self._notebook)
+        # Mostrar banner debajo del header, antes del wrapper del notebook
+        # (notebook ahora vive dentro de _nb_wrapper para soportar el indicador
+        # animado; el banner y el wrapper son ambos hijos directos de self).
+        anchor = getattr(self, "_nb_wrapper", None) or self._notebook
+        self._deformation_banner.pack(fill="x", before=anchor)
         # Auto-pausar el bot
         if self.bot_thread is not None and not self.bot_thread._paused:
             self.bot_thread.pause()
@@ -8037,8 +9276,15 @@ class App(tk.Tk):
             manual[str(map_id)] = {
                 "ground_level_offsets": {int(k): int(v) for k, v in ground_level_offsets.items()},
             }
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+            from config_loader import save_config as _save_config_safe
+
+            try:
+
+                _save_config_safe(raw, config_path)
+
+            except Exception as _exc:
+
+                import logging; logging.getLogger("bot.config").error("save_config bloqueado por proteccion anti-perdida: %r", _exc)
             # Recargar config en runtime
             self.config_data = load_config()
             self._sync_runtime_bot_config()
@@ -8050,10 +9296,15 @@ class App(tk.Tk):
             messagebox.showerror("Calibración", f"No se pudo guardar: {e}", parent=self)
 
     def _append_log(self, msg):
-        self.log_text.config(state="normal")
-        self.log_text.insert("end", msg + "\n")
-        self.log_text.see("end")
-        self.log_text.config(state="disabled")
+        if not hasattr(self, "log_text") or self.log_text is None:
+            return
+        try:
+            self.log_text.config(state="normal")
+            self.log_text.insert("end", str(msg) + "\n")
+            self.log_text.see("end")
+            self.log_text.config(state="disabled")
+        except Exception as _exc:
+            _log.debug("[gui] except Exception swallowed: %r", _exc)
 
 
 if __name__ == "__main__":

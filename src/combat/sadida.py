@@ -12,6 +12,11 @@ except Exception:
             def warn(self, *a, **k): pass
         return _Noop()
 
+from app_logger import get_logger
+
+_log = get_logger("bot.combat.sadida")
+
+
 # Spell IDs confirmados via sniffer
 _SPELL_TEMBLOR = 181
 _SPELL_VIENTO_ENVENENADO = 196
@@ -43,7 +48,7 @@ class Profile(CombatProfile):
         """Reset de estado entre peleas: si la pelea termino con un combo en curso,
         evitar que la siguiente arranque a mitad de combo (viola prioridad combo 1)."""
         if self._h1_pending or self._h2_pending or self._h3_pending:
-            print("[SADIDA] fight_end con combo pendiente — reseteando estado.")
+            _log.info("[SADIDA] fight_end con combo pendiente — reseteando estado.")
         self._last_combo_turn = -999
         self._h1_pending = False
         self._h2_pending = False
@@ -102,6 +107,18 @@ class Profile(CombatProfile):
         # porque el sniffer puede tener GTM pendiente con PA desactualizado.
         pa_before = local_pa if local_pa is not None else state.get("current_pa")
 
+        # FOCO INCONDICIONAL ANTES DE CADA CAST (2026-04-25):
+        # Match con la lógica histórica del backup que funcionaba. Si Dofus
+        # perdió foco (notificación Windows / GUI / otra app), la hotkey
+        # iría a la ventana equivocada → spell no se arma → click cae sin
+        # spell armado → 0 GA300 al server. Diagnosticado en map 2881 cell
+        # 107 donde 11 turnos consecutivos perdieron HP 1484→1 sin enviar
+        # UN solo GA300. Costo: ~100ms, despreciable vs combate perdido.
+        try:
+            ctx.screen.focus_window()
+        except Exception:
+            pass
+
         attempt_started_at = time.time()
         ctx.actions.quick_press_key(key)
         time.sleep(config_delay(ctx.config, "combat_spell_select_delay", 0.12))
@@ -135,7 +152,17 @@ class Profile(CombatProfile):
                 if seq_ready_at >= attempt_started_at:
                     if time.time() > seq_ready_at + 0.15:
                         return True
-                if time.time() > confirm_time + 2.0:
+                # Fallback: en Dofus Retro los paquetes S{actor} (action_sequence_ready)
+                # no se emiten para nuestro actor, así que la rama de arriba nunca
+                # se toma y dependemos de este timeout post-GA. El GA ya significa
+                # "server aceptó y aplicó el hechizo", así que cualquier espera extra
+                # es solo para dejar drenar paquetes. Antes: 2.0s fijo (medido:
+                # 2.66s/cast × 1894 casts = 84 min/sesión solo esperando). Ahora
+                # configurable vía combat_post_confirm_delay.
+                post_confirm_delay = config_delay(
+                    ctx.config, "combat_post_confirm_delay", 0.30
+                )
+                if time.time() > confirm_time + post_confirm_delay:
                     return True
 
         return False
@@ -157,7 +184,7 @@ class Profile(CombatProfile):
         current_pa: int,
     ) -> tuple[bool, int]:
         if current_pa < cost:
-            print(f"[SADIDA] {name}: PA insuficiente ({current_pa}/{cost}). Saltando.")
+            _log.info(f"[SADIDA] {name}: PA insuficiente ({current_pa}/{cost}). Saltando.")
             get_telemetry().emit(
                 "spell_skip", name=name, spell_id=spell_id, cost=cost, pa=current_pa,
                 reason="insufficient_pa",
@@ -178,23 +205,23 @@ class Profile(CombatProfile):
         pa_now = int(_raw_pa) if _raw_pa is not None else current_pa
 
         if not ok and pa_now < current_pa:
-            print(f"[SADIDA] {name} confirmado por caida de PA ({current_pa}->{pa_now}).")
+            _log.info(f"[SADIDA] {name} confirmado por caida de PA ({current_pa}->{pa_now}).")
             ok = True
         elif not ok:
             if self._already_confirmed(ctx, spell_id, t_start):
-                print(f"[SADIDA] {name} confirmado tardamente por sniffer.")
+                _log.info(f"[SADIDA] {name} confirmado tardamente por sniffer.")
                 ok = True
                 state = ctx.refresh_combat_state(0.0)
                 _late_pa = state.get("current_pa")
                 pa_now = int(_late_pa) if _late_pa is not None else pa_now
             else:
                 # Sniffer puede tener PA desactualizado (GTM pendiente). Preservar estimado local.
-                print(f"[SADIDA] {name} FALLO. PA local={current_pa} sniffer={pa_now}")
+                _log.info(f"[SADIDA] {name} FALLO. PA local={current_pa} sniffer={pa_now}")
                 return False, current_pa
 
         if ok and pa_now >= current_pa:
             pa_now = current_pa - cost
-            print(f"[SADIDA] {name} PA estimado localmente: {current_pa}->{pa_now} (sniffer pendiente)")
+            _log.info(f"[SADIDA] {name} PA estimado localmente: {current_pa}->{pa_now} (sniffer pendiente)")
 
         get_telemetry().emit(
             "spell_result", name=name, spell_id=spell_id, ok=bool(ok),
@@ -285,7 +312,7 @@ class Profile(CombatProfile):
             # Antes de retry: chequear si una confirmación llegó tarde para nuestro spell_id
             # (caso típico: cast 1 timeout pasado, GA llegó 50ms después; no relancemos).
             if attempts > 0 and self._already_confirmed(ctx, spell_id, t_repeat_started):
-                print(f"[SADIDA] {name} confirmado tardamente por sniffer (entre intentos). Continuando combo.")
+                _log.info(f"[SADIDA] {name} confirmado tardamente por sniffer (entre intentos). Continuando combo.")
                 ok = True
                 # Asumir PA gastada ya que el server confirmó el cast
                 current_pa = max(0, current_pa - cost)
@@ -295,6 +322,12 @@ class Profile(CombatProfile):
             # su id, refrescar el sniffer y re-proyectar desde su celda ACTUAL antes
             # de cada intento. Sin esto, si el enemigo se mueve durante los retries
             # los 6 clicks caen en la celda vieja y el spell falla en cascada.
+            #
+            # TAMBIÉN: si el enemigo murió entre intentos (no aparece en ctx.enemies
+            # porque _get_enemy_targets lo filtra por alive=False), abortamos el
+            # cast ANTES de clickear. Antes del fix el bot seguía clickeando celdas
+            # donde acababa de morir un mob — exactamente la queja del usuario
+            # "atacaba celdas vacías" (2026-04-23).
             if (
                 not self_target
                 and not pj_click
@@ -309,16 +342,30 @@ class Profile(CombatProfile):
                         if str(e.get("id")) == str(target_actor_id):
                             fresh_enemy = e
                             break
-                    if fresh_enemy is not None:
-                        fresh_cell = fresh_enemy.get("cell_id")
-                        if fresh_cell is not None and fresh_cell != target_cell_id:
-                            new_pos = ctx.project_self_cell(int(fresh_cell))
-                            if new_pos:
-                                print(f"[SADIDA] {name}: target actor={target_actor_id} "
-                                      f"se movió cell={target_cell_id}->{fresh_cell}. "
-                                      f"Re-proyectando pos {target_pos}->{new_pos}.")
-                                target_pos = new_pos
-                                target_cell_id = int(fresh_cell)
+                    if fresh_enemy is None:
+                        # Enemigo ya no vivo / no visible → abortar secuencia de
+                        # retry. La celda target puede estar vacía o con otro
+                        # mob; no forzamos el cast.
+                        _log.info(f"[SADIDA] {name}: target actor={target_actor_id} "
+                              f"ya no está vivo/visible (cell={target_cell_id}). "
+                              f"ABORTANDO cast — no clickear celda fantasma.")
+                        get_telemetry().emit(
+                            "spell_abort_dead_target",
+                            name=name, spell_id=spell_id,
+                            target_actor_id=str(target_actor_id),
+                            target_cell=target_cell_id,
+                            attempts_done=attempts,
+                        )
+                        break
+                    fresh_cell = fresh_enemy.get("cell_id")
+                    if fresh_cell is not None and fresh_cell != target_cell_id:
+                        new_pos = ctx.project_self_cell(int(fresh_cell))
+                        if new_pos:
+                            _log.info(f"[SADIDA] {name}: target actor={target_actor_id} "
+                                  f"se movió cell={target_cell_id}->{fresh_cell}. "
+                                  f"Re-proyectando pos {target_pos}->{new_pos}.")
+                            target_pos = new_pos
+                            target_cell_id = int(fresh_cell)
                 except Exception as _e:
                     pass
 
@@ -347,7 +394,7 @@ class Profile(CombatProfile):
                         manual_self_pixel = None
             if manual_self_pixel is not None:
                 if pos != manual_self_pixel:
-                    print(f"[SADIDA] {name}: MANUAL_PIXEL self-cast cell={ctx.my_cell} "
+                    _log.info(f"[SADIDA] {name}: MANUAL_PIXEL self-cast cell={ctx.my_cell} "
                           f"({pos} -> {manual_self_pixel}) [pj_click={pj_click} self_target={self_target}]")
                 pos = manual_self_pixel
                 did_reproject = True
@@ -355,7 +402,7 @@ class Profile(CombatProfile):
                 fresh_pos = ctx.project_self_cell(ctx.my_cell)
                 if fresh_pos:
                     if pos != fresh_pos:
-                        print(f"[SADIDA] {name}: re-proyectando desde cell={ctx.my_cell} "
+                        _log.info(f"[SADIDA] {name}: re-proyectando desde cell={ctx.my_cell} "
                               f"({pos} -> {fresh_pos}) [pj_click={pj_click} self_target={self_target}]")
                     pos = fresh_pos
                     did_reproject = True
@@ -378,7 +425,7 @@ class Profile(CombatProfile):
             jitter_dx, jitter_dy = (0, 0)
             if manual_self_pixel is not None:
                 if attempts > 0:
-                    print(f"[SADIDA] {name}: retry #{attempts} MANUAL_PIXEL cell={ctx.my_cell} -> pos={pos} (sin jitter, LEY)")
+                    _log.info(f"[SADIDA] {name}: retry #{attempts} MANUAL_PIXEL cell={ctx.my_cell} -> pos={pos} (sin jitter, LEY)")
             elif attempts == 0 and pj_click and pos and target_cell_id is not None:
                 getter = getattr(ctx, "get_spell_jitter_offset", None)
                 if getter is not None:
@@ -387,7 +434,7 @@ class Profile(CombatProfile):
                         if learned and (learned[0] or learned[1]):
                             jitter_dx, jitter_dy = int(learned[0]), int(learned[1])
                             pos = (int(pos[0]) + jitter_dx, int(pos[1]) + jitter_dy)
-                            print(f"[SADIDA] {name}: jitter APRENDIDO ({jitter_dx:+d},{jitter_dy:+d}) para cell={target_cell_id} -> pos={pos}")
+                            _log.info(f"[SADIDA] {name}: jitter APRENDIDO ({jitter_dx:+d},{jitter_dy:+d}) para cell={target_cell_id} -> pos={pos}")
                     except Exception:
                         pass
             elif attempts > 0 and pos and jitter_offsets:
@@ -395,7 +442,7 @@ class Profile(CombatProfile):
                 jitter_dx, jitter_dy = jitter_offsets[idx]
                 if jitter_dx or jitter_dy:
                     pos = (int(pos[0]) + jitter_dx, int(pos[1]) + jitter_dy)
-                    print(f"[SADIDA] {name}: retry #{attempts} con jitter ({jitter_dx:+d},{jitter_dy:+d}) -> pos={pos}")
+                    _log.info(f"[SADIDA] {name}: retry #{attempts} con jitter ({jitter_dx:+d},{jitter_dy:+d}) -> pos={pos}")
 
             # Clamp del click a la región del juego.
             # Histórico: se diseñó para evitar pegarle al HUD superior cuando
@@ -416,7 +463,7 @@ class Profile(CombatProfile):
                     if pos[1] < safe_top:
                         old_y = pos[1]
                         pos = (int(pos[0]), safe_top)
-                        print(f"[SADIDA] {name}: click Y={old_y} fuera de iso (top HUD, sin reproyeccion). Clamp a Y={safe_top}.")
+                        _log.info(f"[SADIDA] {name}: click Y={old_y} fuera de iso (top HUD, sin reproyeccion). Clamp a Y={safe_top}.")
                 except Exception:
                     pass
             # Adicional: aún con re-proyección, clampar al borde MUY superior
@@ -429,7 +476,7 @@ class Profile(CombatProfile):
                     if pos[1] < hard_top:
                         old_y = pos[1]
                         pos = (int(pos[0]), hard_top)
-                        print(f"[SADIDA] {name}: click Y={old_y} fuera de game_region. Clamp a Y={hard_top}.")
+                        _log.info(f"[SADIDA] {name}: click Y={old_y} fuera de game_region. Clamp a Y={hard_top}.")
                 except Exception:
                     pass
 
@@ -441,7 +488,21 @@ class Profile(CombatProfile):
             # gastando PM hasta perder el turno.
             cell_before_click = ctx.my_cell
 
-            print(f"[SADIDA] {name}: click final pos={pos} (attempt #{attempts}, self_target={self_target}, pj_click={pj_click})")
+            _log.info(f"[SADIDA] {name}: click final pos={pos} (attempt #{attempts}, self_target={self_target}, pj_click={pj_click})")
+            # ESCALACIÓN DE FOCO en retry: el primer intento ya pasó por
+            # `_cast_spell.ensure_focus()`, pero si fallamos significa que
+            # algo no anduvo. Posibilidades: (a) Dofus no era foreground y el
+            # quick_press_key("1") fue a otra ventana; (b) ensure_focus la
+            # devolvió al foreground después de la hotkey, demasiado tarde.
+            # En el retry, FORZAMOS focus_window() ANTES del próximo cast
+            # — el costo (~100ms) es despreciable comparado con perder 11
+            # turnos al hilo y morir (caso real diagnosticado 2026-04-25,
+            # map 2881 cell 107, HP 1484→1).
+            if attempts > 0:
+                try:
+                    ctx.screen.focus_window()
+                except Exception:
+                    pass
             ok, current_pa = self._cast_with_pa_gate(ctx, name, key, pos, spell_id, cost, current_pa)
             attempts += 1
 
@@ -450,7 +511,7 @@ class Profile(CombatProfile):
             if not ok and pj_click and cell_before_click is not None:
                 cell_after_click = ctx.my_cell
                 if cell_after_click is not None and cell_after_click != cell_before_click:
-                    print(f"[SADIDA] {name}: CELL-JUMP detectado tras click "
+                    _log.info(f"[SADIDA] {name}: CELL-JUMP detectado tras click "
                           f"(cell {cell_before_click}->{cell_after_click}) sin confirmación de hechizo. "
                           f"La hotkey no armó el spell — abortando retries.")
                     get_telemetry().emit(
@@ -471,9 +532,9 @@ class Profile(CombatProfile):
                 if cb is not None:
                     try:
                         cb(int(target_cell_id), int(jitter_dx), int(jitter_dy))
-                        print(f"[SADIDA] {name}: APRENDIDO spell-jitter ({jitter_dx:+d},{jitter_dy:+d}) para cell={target_cell_id} (intento #{attempts}).")
+                        _log.info(f"[SADIDA] {name}: APRENDIDO spell-jitter ({jitter_dx:+d},{jitter_dy:+d}) para cell={target_cell_id} (intento #{attempts}).")
                     except Exception as e:
-                        print(f"[SADIDA] {name}: record_learned_offset falló: {e}")
+                        _log.info(f"[SADIDA] {name}: record_learned_offset falló: {e}")
 
             # Drenar sniffer y chequear fin de combate
             state = ctx.refresh_combat_state(0.0)
@@ -483,12 +544,12 @@ class Profile(CombatProfile):
             if not ok:
                 # Doble check post-cast: el GA puede haber llegado en este mismo refresh
                 if self._already_confirmed(ctx, spell_id, t_repeat_started):
-                    print(f"[SADIDA] {name} confirmado por sniffer tras attempt {attempts}. Combo continúa.")
+                    _log.info(f"[SADIDA] {name} confirmado por sniffer tras attempt {attempts}. Combo continúa.")
                     ok = True
                     current_pa = max(0, current_pa - cost)
                     break
 
-                print(f"[SADIDA] {name} fallo. Reintentando mismo hechizo ({attempts}/{max_attempts}).")
+                _log.info(f"[SADIDA] {name} fallo. Reintentando mismo hechizo ({attempts}/{max_attempts}).")
 
                 # Fallback desbloqueador: si llevamos N fallos consecutivos en un
                 # spell apuntado a enemigo (no pj_click, no self_target), el
@@ -504,8 +565,23 @@ class Profile(CombatProfile):
                     and getattr(ctx, "move_random_reachable", None) is not None
                 ):
                     mp_now = ctx.current_mp if ctx.current_mp is not None else 0
-                    if mp_now > 0:
-                        print(
+                    # REGLA ABSOLUTA: no moverse si placado. Si el sprite
+                    # del PJ tapa al mob pero estamos placados, aguantamos
+                    # y el spell falla — mejor turno fallido que PA perdida.
+                    unblock_tackled = bool(
+                        getattr(ctx, "enemy_in_melee_range", None)
+                        and ctx.enemy_in_melee_range()
+                    )
+                    if unblock_tackled:
+                        _log.info(
+                            f"[SADIDA] {name}: {attempts} fallos consecutivos + "
+                            f"placado — NO random-move (regla absoluta: no moverse placado). "
+                            f"Continuando retries sin desbloqueo."
+                        )
+                        # Evita loop infinito del check en futuros attempts
+                        unblock_triggered = True
+                    if mp_now > 0 and not unblock_tackled:
+                        _log.info(
                             f"[SADIDA] {name}: {attempts} fallos consecutivos — "
                             f"posible sprite tapando al mob. Disparando random-move "
                             f"(MP disponible={mp_now})."
@@ -516,7 +592,7 @@ class Profile(CombatProfile):
                                 mp_now, reason=f"desbloquear {name}"
                             ) or {}
                         except Exception as _mv_exc:
-                            print(f"[SADIDA] {name}: move_random_reachable falló: {_mv_exc!r}")
+                            _log.info(f"[SADIDA] {name}: move_random_reachable falló: {_mv_exc!r}")
                             move_res = {}
                         if move_res.get("fight_ended"):
                             return True, 0
@@ -534,7 +610,7 @@ class Profile(CombatProfile):
                         # para no exceder max_attempts totales, pero sí
                         # forzamos jitter base (0,0) en el próximo intento.
                         if move_res.get("moved"):
-                            print(
+                            _log.info(
                                 f"[SADIDA] {name}: PJ ahora en cell={post_state.get('combat_cell')}. "
                                 f"PA={post_state.get('current_pa')} PM={post_state.get('current_mp')}."
                             )
@@ -546,7 +622,7 @@ class Profile(CombatProfile):
 
                 # Re-check confirmación tras la espera (GA pudo llegar en estos 350ms)
                 if self._already_confirmed(ctx, spell_id, t_repeat_started):
-                    print(f"[SADIDA] {name} confirmado por sniffer durante espera. Combo continúa.")
+                    _log.info(f"[SADIDA] {name} confirmado por sniffer durante espera. Combo continúa.")
                     ok = True
                     current_pa = max(0, current_pa - cost)
                     break
@@ -554,7 +630,7 @@ class Profile(CombatProfile):
                 # Verificar PA real del sniffer tras la espera (GTM puede haber llegado)
                 sniffer_pa = state.get("current_pa")
                 if sniffer_pa is not None and sniffer_pa < cost:
-                    print(f"[SADIDA] {name}: Sniffer confirma PA insuficiente tras espera ({sniffer_pa}<{cost}). Deteniendo reintentos.")
+                    _log.info(f"[SADIDA] {name}: Sniffer confirma PA insuficiente tras espera ({sniffer_pa}<{cost}). Deteniendo reintentos.")
                     current_pa = sniffer_pa
                     break
 
@@ -563,18 +639,65 @@ class Profile(CombatProfile):
                 # Seguir clickeando aquí significa hechizar durante el turno enemigo (no pasa nada
                 # útil y se pierden 6 retries × 350ms mientras nos atacan).
                 if sniffer_pa is not None and sniffer_pa > pa_at_retry_start:
-                    print(f"[SADIDA] {name}: PA subió ({pa_at_retry_start}->{sniffer_pa}) — turno nuevo detectado. Abortando retries.")
+                    _log.info(f"[SADIDA] {name}: PA subió ({pa_at_retry_start}->{sniffer_pa}) — turno nuevo detectado. Abortando retries.")
                     current_pa = sniffer_pa
                     break
                 # Doble seguro: si el bot global incrementó turn_number durante el retry, abortar.
                 turn_now = int(getattr(ctx, "turn_number", 0) or 0)
                 if turn_now > turn_at_retry_start:
-                    print(f"[SADIDA] {name}: turn_number {turn_at_retry_start}->{turn_now} durante retry. Abortando.")
+                    _log.info(f"[SADIDA] {name}: turn_number {turn_at_retry_start}->{turn_now} durante retry. Abortando.")
                     break
 
         return ok, current_pa
 
     def on_turn(self, action_pos: tuple | None, ctx: CombatContext) -> str:
+        # F4.C1: observabilidad GameState (sin cambiar logica).
+        # Si Bot expuso game_state, verificar staleness de campos criticos
+        # del sniffer y loggear warnings. Permite detectar desincronizacion
+        # entre el sniffer y la decision de combate sin riesgo de regresion.
+        gs = getattr(ctx, "game_state", None)
+        if gs is not None:
+            for fname, max_age in (("pa", 5.0), ("pm", 5.0), ("combat_cell", 10.0), ("is_my_turn", 15.0)):
+                age = gs.age_s(fname)
+                if age > max_age:
+                    _log.warning(
+                        "[SADIDA] on_turn entry: game_state.%s tiene %.1fs (>%.1fs); valor=%r",
+                        fname, age, max_age, gs.get(fname),
+                    )
+
+        # ── GUARDIA DE FOCO: click físico en barra de título ──────────────
+        # (2026-04-25, fix combat_focus_loss). Una vez por turno, clickeamos
+        # la barra de título de Dofus para forzar foreground SIN disparar
+        # acción del juego. Belt-and-suspenders sobre `ensure_focus()` —
+        # cubre el caso donde Windows roba el foco silenciosamente entre
+        # turnos (notificación, GUI del bot, etc.) y el bot pierde 11
+        # turnos clickeando hechizos sobre una ventana sin foco.
+        # Configurable via bot.combat_click_title_bar_each_turn (default true).
+        if ctx.config.get("bot", {}).get("combat_click_title_bar_each_turn", True):
+            try:
+                fn = getattr(ctx.screen, "click_title_bar_for_focus", None)
+                if fn is not None:
+                    fn()
+                else:
+                    # Fallback si la versión vieja del Screen no tiene el método.
+                    ctx.screen.focus_window()
+            except Exception:
+                pass
+
+        # ── F4.C2: fallback al GameState antes del wait loop ────────────
+        # Si ctx.current_pa es None pero GameState tiene un valor reciente
+        # (<5s), usarlo en vez de esperar el GTM. Reduce latencia al inicio
+        # del turno cuando el sniffer mantiene el estado actualizado.
+        if ctx.current_pa is None and gs is not None:
+            cached_pa = gs.get("pa")
+            if cached_pa is not None and not gs.is_stale("pa", max_age_s=5.0):
+                ctx.current_pa = cached_pa
+                _log.info("[SADIDA] PA recuperado desde GameState (age=%.1fs): %s", gs.age_s("pa"), cached_pa)
+            cached_pm = gs.get("pm")
+            if ctx.current_mp is None and cached_pm is not None and not gs.is_stale("pm", max_age_s=5.0):
+                ctx.current_mp = cached_pm
+                _log.info("[SADIDA] PM recuperado desde GameState (age=%.1fs): %s", gs.age_s("pm"), cached_pm)
+
         # ── Esperar GTM de inicio de turno ──────────────────────────────────
         # GTS resetea _sniffer_pa a None. Esperamos hasta 1.0s para el GTM.
         # Caso especial (forma árbol): el GTM puede llegar ANTES del GTS o tener
@@ -594,48 +717,60 @@ class Profile(CombatProfile):
             _pre = last_state.get("pa_pre_gts")
             if _pre is not None:
                 ctx.current_pa = int(_pre)
-                print(f"[SADIDA] GTM llegó antes del GTS — PA rescatado: {_pre}")
+                _log.info(f"[SADIDA] GTM llegó antes del GTS — PA rescatado: {_pre}")
 
         # EXTENDED WAIT: si current_pa == 0 y turn_number > 1, el valor es
         # ambiguo. Puede ser:
         #   (a) forma árbol real (PA=0 al inicio del turno, correcto pasar).
         #   (b) GTM de regen en vuelo (el server envía PA=8 DESPUÉS del GTS).
         # Observado en Dofus 1.29: el server a veces envía la PA-regen con
-        # 1-3s de retraso post-GTS. Sin este wait extendido, pasamos el turno
-        # con PA "0" mientras el PA=8 real llega un instante después.
+        # 1-3s de retraso post-GTS.
         #
-        # Tolerancia: si estamos realmente en forma árbol, pagamos un timeout
-        # de ~2s extra cada ~11 turnos (hasta que el PS-cd expire). Si NO
-        # estamos en forma árbol, rescatamos el turno entero (enorme ganancia).
+        # OPTIMIZACIÓN 2026-04-23: si acabamos de castear PS (forma árbol
+        # dura ~2 turnos), NO necesitamos el wait — sabemos con certeza que
+        # el PA=0 es real. Saltamos el wait y pasamos turno inmediatamente.
+        # Antes: 2s hardcoded por cada turno en árbol = ~4s perdidos cada
+        # ciclo PS (user reportó que presionar Space tardaba mucho).
         if ctx.current_pa == 0 and ctx.turn_number > 1:
-            extended_start = time.time()
-            extended_deadline = extended_start + 2.0
-            prev_pa = ctx.current_pa
-            rescued = False
-            while time.time() < extended_deadline:
-                last_state = ctx.refresh_combat_state(0.1)
-                if last_state.get("fight_ended"):
-                    return "combat_ended"
-                # El wrapper auto_update_refresh ya actualizó ctx.current_pa
-                # si llegó un GTM con campo `current_pa` > 0. Pero como el
-                # wrapper sólo escribe cuando res["current_pa"] is not None,
-                # un valor 0 no pisa uno previo. Por eso chequeamos explícito.
-                fresh = last_state.get("current_pa")
-                if fresh is not None and int(fresh) > 0:
-                    ctx.current_pa = int(fresh)
-                    print(
-                        f"[SADIDA] PA rescatado por GTM tardío: {prev_pa}->{ctx.current_pa} "
-                        f"(waited {time.time() - extended_start:.2f}s post-GTS)."
-                    )
-                    rescued = True
-                    break
-            if not rescued:
-                # Timeout: PA realmente es 0 (forma árbol u otro caso).
-                _ps_cd_here = max(0, 11 - (ctx.turn_number - self._ps_cast_at_turn))
-                print(
-                    f"[SADIDA] Wait extendido agotado (2s) — PA=0 confirmado. "
-                    f"Probable forma árbol (PS cd local={_ps_cd_here})."
+            ps_turns_ago = ctx.turn_number - self._ps_cast_at_turn
+            tree_form_max_turns = int(
+                ctx.config.get("bot", {}).get("combat_ps_tree_form_turns", 2) or 2
+            )
+            if 0 < ps_turns_ago <= tree_form_max_turns:
+                # Forma árbol confirmada por tracking local de PS — no esperar.
+                _log.info(
+                    f"[SADIDA] Forma árbol activa (PS hace {ps_turns_ago} turno(s), "
+                    f"ventana={tree_form_max_turns}) — PA=0 esperado, pasando turno sin wait extendido."
                 )
+            else:
+                # Ambiguo: mantener wait extendido por si es GTM tardío de regen.
+                extended_wait = float(
+                    ctx.config.get("bot", {}).get("combat_pa_regen_wait", 2.0) or 2.0
+                )
+                extended_start = time.time()
+                extended_deadline = extended_start + extended_wait
+                prev_pa = ctx.current_pa
+                rescued = False
+                while time.time() < extended_deadline:
+                    last_state = ctx.refresh_combat_state(0.1)
+                    if last_state.get("fight_ended"):
+                        return "combat_ended"
+                    fresh = last_state.get("current_pa")
+                    if fresh is not None and int(fresh) > 0:
+                        ctx.current_pa = int(fresh)
+                        _log.info(
+                            f"[SADIDA] PA rescatado por GTM tardío: {prev_pa}->{ctx.current_pa} "
+                            f"(waited {time.time() - extended_start:.2f}s post-GTS)."
+                        )
+                        rescued = True
+                        break
+                if not rescued:
+                    # Timeout: PA=0 confirmado. Pasamos turno.
+                    _ps_cd_here = max(0, 11 - (ctx.turn_number - self._ps_cast_at_turn))
+                    _log.info(
+                        f"[SADIDA] Wait extendido agotado ({extended_wait}s) — PA=0 confirmado. "
+                        f"(PS cd local={_ps_cd_here}, turn_gap={ps_turns_ago})"
+                    )
 
         # Reset de estado entre peleas: DEBE hacerse ANTES de calcular _local_ps_cd
         # para evitar que valores de la pelea anterior contaminen la lógica actual.
@@ -655,11 +790,11 @@ class Profile(CombatProfile):
         # asumimos forma árbol → PA=0.
         if ctx.current_pa is None and _local_ps_cd > 0:
             ctx.current_pa = 0
-            print(f"[SADIDA] PA desconocido + PS reciente (cd local={_local_ps_cd}) → asumiendo forma árbol PA=0.")
+            _log.info(f"[SADIDA] PA desconocido + PS reciente (cd local={_local_ps_cd}) → asumiendo forma árbol PA=0.")
 
         current_pa = ctx.current_pa if ctx.current_pa is not None else 8
         current_mp = ctx.current_mp if ctx.current_mp is not None else 3
-        print(f"[SADIDA] Inicio turno #{ctx.turn_number}: PA={current_pa} PM={current_mp} cell={ctx.my_cell} "
+        _log.info(f"[SADIDA] Inicio turno #{ctx.turn_number}: PA={current_pa} PM={current_mp} cell={ctx.my_cell} "
               f"(sniffer_raw: PA={ctx.current_pa} PM={ctx.current_mp} ps_cd_local={_local_ps_cd})")
         get_telemetry().emit(
             "sadida_state", pa=current_pa, mp=current_mp, my_cell=ctx.my_cell,
@@ -670,7 +805,7 @@ class Profile(CombatProfile):
 
         # PA=0 → forma árbol u otro estado sin acciones. Pasar turno inmediatamente.
         if current_pa == 0:
-            print("[SADIDA] PA=0 — pasando turno.")
+            _log.info("[SADIDA] PA=0 — pasando turno.")
             self._pass_turn(ctx)
             return "done"
         self._zarza_casts_this_turn = 0
@@ -686,12 +821,25 @@ class Profile(CombatProfile):
         # corra (Combo 1 fresh si los CDs lo permiten, o Combo 2).
         _max_pendiente_fails = int(ctx.config.get("bot", {}).get("sadida_max_pendiente_fails", 2) or 2)
         if self._h1_consecutive_fails >= _max_pendiente_fails:
-            print(f"[SADIDA] H1 pendiente falló {self._h1_consecutive_fails} turno(s) seguidos "
+            _log.info(f"[SADIDA] H1 pendiente falló {self._h1_consecutive_fails} turno(s) seguidos "
                   f"(cap={_max_pendiente_fails}). Abandonando pendientes y reseteando estado.")
             get_telemetry().emit(
                 "pendiente_cap_reached", spell="H1", fails=self._h1_consecutive_fails,
                 cap=_max_pendiente_fails, last_fail_cell=self._h1_last_fail_cell,
             )
+            # ESCALACIÓN HARD DE FOCO: 2 turnos sin confirmar H1 es el patrón
+            # exacto del bug "foco perdido" (2026-04-25, map 2881 cell 107).
+            # Forzar click en barra de título + focus_window agresivo antes
+            # de que el flujo continue hacia un Combo 1 fresco — si no lo
+            # hacemos, el reset solo nos hace volver a fallar idéntico.
+            try:
+                fn = getattr(ctx.screen, "click_title_bar_for_focus", None)
+                if fn is not None:
+                    fn()
+                ctx.screen.focus_window()
+                _log.info("[SADIDA] pendiente_cap_reached: foco forzado (title bar click + focus_window).")
+            except Exception:
+                pass
             self._h1_pending = False
             self._h2_pending = False
             self._h3_pending = False
@@ -700,19 +848,26 @@ class Profile(CombatProfile):
 
         # --- Combo 1: Lógica de continuación de combo pendiente ---
         if self._h1_pending:
-            print(f"[SADIDA] H1 (Temblor) pendiente del turno anterior (PA={current_pa}, fails_consec={self._h1_consecutive_fails}).")
+            _log.info(f"[SADIDA] H1 (Temblor) pendiente del turno anterior (PA={current_pa}, fails_consec={self._h1_consecutive_fails}).")
             # Si H1 ya falló >=1 vez en la celda actual y tenemos PM, FORZAR
             # reubicación a otra celda antes de reintentar (la celda actual
             # tiene algún problema: HUD/sprite/UI bloqueando el click).
+            # REGLA ABSOLUTA: si estamos placados, NO moverse — reintentar
+            # el cast desde la misma celda aunque falle.
+            pending_tackled = bool(
+                getattr(ctx, "enemy_in_melee_range", None)
+                and ctx.enemy_in_melee_range()
+            )
             if (self._h1_consecutive_fails >= 1
                     and current_mp > 0
                     and ctx.my_cell is not None
                     and self._h1_last_fail_cell == ctx.my_cell
+                    and not pending_tackled
                     and getattr(ctx, "move_towards_enemy", None)):
-                print(f"[SADIDA] H1 falló en cell={ctx.my_cell}. Forzando reubicación táctica antes de reintentar.")
+                _log.info(f"[SADIDA] H1 falló en cell={ctx.my_cell}. Forzando reubicación táctica antes de reintentar.")
                 move_res = ctx.move_towards_enemy(current_mp, desired_range=0, bypass_rat_mode=True, force_relocate=True)
                 if move_res and move_res.get("moved"):
-                    time.sleep(0.3)
+                    time.sleep(config_delay(ctx.config, "combat_post_move_delay", 0.08))
                     if move_res.get("self_screen_pos"):
                         self_pos = move_res["self_screen_pos"]
                     if move_res.get("combat_cell") is not None:
@@ -738,7 +893,7 @@ class Profile(CombatProfile):
                 else:
                     self._h1_consecutive_fails += 1
                     self._h1_last_fail_cell = ctx.my_cell
-                    print(f"[SADIDA] H1 (Pendiente) no pudo confirmarse (fails_consec={self._h1_consecutive_fails}). Pasando turno.")
+                    _log.info(f"[SADIDA] H1 (Pendiente) no pudo confirmarse (fails_consec={self._h1_consecutive_fails}). Pasando turno.")
                     self._pass_turn(ctx)
                     return "done"
             else:
@@ -746,7 +901,7 @@ class Profile(CombatProfile):
                 return "done"
 
         if self._h2_pending:
-            print(f"[SADIDA] H2 (Viento) pendiente (PA={current_pa}).")
+            _log.info(f"[SADIDA] H2 (Viento) pendiente (PA={current_pa}).")
             if self_pos and current_pa >= 3:
                 h2_ok, current_pa = self._repeat_same_spell_until_success(
                     ctx, "H2 Viento Envenenado (Pendiente)", "2", self_pos, _SPELL_VIENTO_ENVENENADO, 3, current_pa,
@@ -757,7 +912,7 @@ class Profile(CombatProfile):
                     self._h2_pending = False
                     self._h3_pending = True
                 else:
-                    print("[SADIDA] H2 (Pendiente) no pudo confirmarse. Pasando turno.")
+                    _log.info("[SADIDA] H2 (Pendiente) no pudo confirmarse. Pasando turno.")
                     self._pass_turn(ctx)
                     return "done"
             else:
@@ -765,7 +920,7 @@ class Profile(CombatProfile):
                 return "done"
 
         if self._h3_pending:
-            print(f"[SADIDA] H3 (Potencia) pendiente (PA={current_pa}).")
+            _log.info(f"[SADIDA] H3 (Potencia) pendiente (PA={current_pa}).")
             if self_pos and current_pa >= 2:
                 h3_ok, current_pa = self._repeat_same_spell_until_success(
                     ctx, "H3 Potencia Silvestre (Pendiente)", "3", self_pos, _SPELL_POTENCIA_SILVESTRE, 2, current_pa,
@@ -781,11 +936,11 @@ class Profile(CombatProfile):
                     # con PA falso y perdia segundos.
                     self._h3_pending = False
                     self._ps_cast_at_turn = ctx.turn_number
-                    print("[SADIDA] H3 (Pendiente) confirmada. Forma arbol - pasando turno.")
+                    _log.info("[SADIDA] H3 (Pendiente) confirmada. Forma arbol - pasando turno.")
                     self._pass_turn(ctx)
                     return "done"
                 else:
-                    print("[SADIDA] H3 (Pendiente) no pudo confirmarse. Pasando turno.")
+                    _log.info("[SADIDA] H3 (Pendiente) no pudo confirmarse. Pasando turno.")
                     self._pass_turn(ctx)
                     return "done"
             else:
@@ -807,44 +962,79 @@ class Profile(CombatProfile):
 
         if combo_1_available:
             is_tackled = bool(getattr(ctx, "enemy_in_melee_range", None) and ctx.enemy_in_melee_range())
-            print(f"[SADIDA] Combo 1 — PA={current_pa} PM={current_mp} placado={is_tackled} "
+            _log.info(f"[SADIDA] Combo 1 — PA={current_pa} PM={current_mp} placado={is_tackled} "
                   f"(cds: T={cooldown_181} VE={cooldown_196} PS={cooldown_197})")
             get_telemetry().emit(
                 "combo_branch", branch="combo1", pa=current_pa, mp=current_mp,
                 tackled=is_tackled, cd_temblor=cooldown_181, cd_viento=cooldown_196, cd_ps=cooldown_197,
             )
 
-            # Skip movimiento si TODOS los enemigos ya están en rango AoE (radio 9)
-            # desde la celda actual. No tiene sentido gastar PM si el combo ya cubre
-            # a todos desde donde estoy. El placaje no aplica si no me muevo.
+            # Skip movimiento:
+            # (A) REGLA ABSOLUTA DEL USUARIO: si is_tackled=True (hay un
+            #     enemigo adyacente), NUNCA moverse. El placaje castiga
+            #     con PA extra al despegarse, lo que invalida el combo.
+            #     Aunque _choose_combat_approach_cell tenga lógica para
+            #     minimizar el costo, la regla es no moverse y punto.
+            #     Reportado 2026-04-24: bot placado intentó approach,
+            #     gastó PA, Temblor fallo x5, turno perdido.
+            # (B) Si TODOS los enemigos ya están en rango AoE desde la
+            #     celda actual — no tiene sentido gastar PM.
+            #     EXCEPCIÓN: si el mapa tiene `priority_movement_target_cell`
+            #     configurado y el PJ NO está ahí todavía, ESE priority manda
+            #     y se ignora el shortcut (B). Reportado 2026-04-26: bot
+            #     casteaba en cell 186 (map 2926) con priority=214 porque
+            #     todos los mobs ya entraban en AoE desde 186 — la regla del
+            #     usuario es ABSOLUTA: priority siempre gana.
             skip_movement = False
-            combo_aoe_radius = int(ctx.config.get("bot", {}).get("sadida_combo_aoe_radius", 9) or 9)
-            if (ctx.my_cell is not None
-                    and ctx.enemies
-                    and getattr(ctx, "cell_distance", None)):
-                enemy_dists = []
-                for e in ctx.enemies:
-                    ec = e.get("cell_id")
-                    if ec is None:
-                        continue
-                    d = ctx.cell_distance(ctx.my_cell, ec)
-                    if d is not None:
-                        enemy_dists.append(d)
-                if enemy_dists:
-                    in_range = sum(1 for d in enemy_dists if d <= combo_aoe_radius)
-                    if in_range == len(enemy_dists):
-                        skip_movement = True
-                        print(f"[SADIDA] Combo 1: TODOS los enemigos ({in_range}) ya en rango AoE "
-                              f"<={combo_aoe_radius} desde cell={ctx.my_cell}. Skip movimiento.")
+            if is_tackled:
+                skip_movement = True
+                _log.info(f"[SADIDA] Combo 1: PLACADO (is_tackled=True) — "
+                      f"NO se mueve. REGLA absoluta del usuario.")
+            else:
+                # Chequear priority_target ANTES del shortcut (B). Si hay
+                # priority configurado y aún no estamos ahí, seguimos al
+                # bloque de movimiento sí o sí (skip_movement=False).
+                priority_target_cell = None
+                try:
+                    getter = getattr(ctx, "priority_movement_target_cell", None)
+                    if callable(getter):
+                        priority_target_cell = getter()
+                except Exception:
+                    priority_target_cell = None
+                priority_pending = (
+                    priority_target_cell is not None
+                    and ctx.my_cell is not None
+                    and int(priority_target_cell) != int(ctx.my_cell)
+                )
+                if priority_pending:
+                    _log.info(f"[SADIDA] Combo 1: priority_movement_target={priority_target_cell} "
+                          f"!= my_cell={ctx.my_cell} — IGNORANDO shortcut AoE, ejecutando movimiento.")
+                else:
+                    combo_aoe_radius = int(ctx.config.get("bot", {}).get("sadida_combo_aoe_radius", 9) or 9)
+                    if (ctx.my_cell is not None
+                            and ctx.enemies
+                            and getattr(ctx, "cell_distance", None)):
+                        enemy_dists = []
+                        for e in ctx.enemies:
+                            ec = e.get("cell_id")
+                            if ec is None:
+                                continue
+                            d = ctx.cell_distance(ctx.my_cell, ec)
+                            if d is not None:
+                                enemy_dists.append(d)
+                        if enemy_dists:
+                            in_range = sum(1 for d in enemy_dists if d <= combo_aoe_radius)
+                            if in_range == len(enemy_dists):
+                                skip_movement = True
+                                _log.info(f"[SADIDA] Combo 1: TODOS los enemigos ({in_range}) ya en rango AoE "
+                                      f"<={combo_aoe_radius} desde cell={ctx.my_cell}. Skip movimiento.")
 
-            # Reposicionar siempre que haya PM disponible. _choose_combat_approach_cell ya
-            # descuenta el costo de placaje internamente (effective_mp = mp - tackle_cost) y
-            # movement_score evita destinos placados via is_tackled_dest como llave primaria.
+            # Reposicionar solo si no hay skip.
             if not skip_movement and current_mp > 0 and getattr(ctx, "move_towards_enemy", None):
-                print(f"[SADIDA] Optimizando posicion para Combo 1 (placado={is_tackled} PM={current_mp})...")
+                _log.info(f"[SADIDA] Optimizando posicion para Combo 1 (placado={is_tackled} PM={current_mp})...")
                 move_res = ctx.move_towards_enemy(current_mp, desired_range=0, bypass_rat_mode=True)
                 if move_res and move_res.get("moved"):
-                    time.sleep(0.3)
+                    time.sleep(config_delay(ctx.config, "combat_post_move_delay", 0.08))
                     if move_res.get("self_screen_pos"):
                         self_pos = move_res["self_screen_pos"]
                     if move_res.get("combat_cell") is not None:
@@ -869,7 +1059,7 @@ class Profile(CombatProfile):
                     self._h1_pending = True
                     self._h1_consecutive_fails += 1
                     self._h1_last_fail_cell = ctx.my_cell
-                    print(f"[SADIDA] H1 no pudo confirmarse (fails_consec={self._h1_consecutive_fails}). Marcando pendiente.")
+                    _log.info(f"[SADIDA] H1 no pudo confirmarse (fails_consec={self._h1_consecutive_fails}). Marcando pendiente.")
                     self._pass_turn(ctx)
                     return "done"
                 else:
@@ -877,7 +1067,7 @@ class Profile(CombatProfile):
                     self._h1_consecutive_fails = 0
                     self._h1_last_fail_cell = None
             elif cooldown_181 == 0 and current_pa < 2:
-                print(f"[SADIDA] H1 disponible pero PA insuficiente ({current_pa}/2). Queda pendiente.")
+                _log.info(f"[SADIDA] H1 disponible pero PA insuficiente ({current_pa}/2). Queda pendiente.")
                 self._h1_pending = True
                 self._pass_turn(ctx)
                 return "done"
@@ -892,11 +1082,11 @@ class Profile(CombatProfile):
                     return "combat_ended"
                 if not h2_ok:
                     self._h2_pending = True
-                    print("[SADIDA] H2 no pudo confirmarse. Marcando pendiente.")
+                    _log.info("[SADIDA] H2 no pudo confirmarse. Marcando pendiente.")
                     self._pass_turn(ctx)
                     return "done"
             elif cooldown_196 == 0 and current_pa < 3:
-                print(f"[SADIDA] H2 disponible pero PA insuficiente ({current_pa}/3). Queda pendiente.")
+                _log.info(f"[SADIDA] H2 disponible pero PA insuficiente ({current_pa}/3). Queda pendiente.")
                 self._h2_pending = True
                 self._pass_turn(ctx)
                 return "done"
@@ -914,9 +1104,9 @@ class Profile(CombatProfile):
                     self._ps_cast_at_turn = ctx.turn_number
                 else:
                     self._h3_pending = True
-                    print("[SADIDA] H3 no pudo confirmarse. Marcando pendiente.")
+                    _log.info("[SADIDA] H3 no pudo confirmarse. Marcando pendiente.")
             elif cooldown_197 == 0 and current_pa < 2:
-                print(f"[SADIDA] H3 disponible pero PA insuficiente ({current_pa}/2). Queda pendiente.")
+                _log.info(f"[SADIDA] H3 disponible pero PA insuficiente ({current_pa}/2). Queda pendiente.")
                 self._h3_pending = True
 
             # === Chain Combo 1 → Combo 2 ===
@@ -933,11 +1123,14 @@ class Profile(CombatProfile):
             # por lo que current_pa>0 bloquea naturalmente el chain en ese caso.
             # Casos típicos donde dispara: H1 en CD previo + H2/H3 lanzados
             # con PA inicial alto, o cualquier combo parcial que deja sobrante.
-            fresh_chain = ctx.refresh_combat_state(0.1)
+            # 2026-04-23: refresh(0) en vez de refresh(0.1) — acá ya vino el GA
+            # del último spell y su SC de cooldown; polear 100ms extra solo atrasa
+            # la decisión de pasar turno sin aportar info nueva.
+            fresh_chain = ctx.refresh_combat_state(0.0)
             if fresh_chain.get("fight_ended"):
                 return "combat_ended"
             if not ctx.enemies:
-                print("[SADIDA] Sin enemigos vivos tras Combo 1. Pasando turno.")
+                _log.info("[SADIDA] Sin enemigos vivos tras Combo 1. Pasando turno.")
                 self._pass_turn(ctx)
                 return "done"
             ctx.spell_cooldowns = dict(fresh_chain.get("spell_cooldowns") or ctx.spell_cooldowns)
@@ -959,7 +1152,7 @@ class Profile(CombatProfile):
                 self._pass_turn(ctx)
                 return "done"
 
-            print(f"[SADIDA] Combo 1 completo + todos en CD (T={cd1_after} VE={cd2_after} "
+            _log.info(f"[SADIDA] Combo 1 completo + todos en CD (T={cd1_after} VE={cd2_after} "
                   f"PS={cd3_after}). Encadenando Combo 2 con PA={current_pa} MP={current_mp}.")
             get_telemetry().emit(
                 "combo_branch", branch="combo1->combo2_chain",
@@ -974,7 +1167,7 @@ class Profile(CombatProfile):
         # ya sea por entrada directa (Combo 1 no disponible este turno) o por
         # chain desde Combo 1 (recién consumido).
         if not chained_into_combo2:
-            print(f"[SADIDA] Combo 1 en cooldown (T={cooldown_181} VE={cooldown_196} PS={cooldown_197}). Ejecutando Combo 2 (PA={current_pa})")
+            _log.info(f"[SADIDA] Combo 1 en cooldown (T={cooldown_181} VE={cooldown_196} PS={cooldown_197}). Ejecutando Combo 2 (PA={current_pa})")
             get_telemetry().emit(
                 "combo_branch", branch="combo2", pa=current_pa, mp=current_mp,
                 cd_temblor=cooldown_181, cd_viento=cooldown_196, cd_ps=cooldown_197,
@@ -991,21 +1184,35 @@ class Profile(CombatProfile):
         ) if getattr(ctx, "has_line_of_sight", None) and getattr(ctx, "cell_distance", None) else True
 
         if not has_targets_in_los and current_mp > 0 and getattr(ctx, "move_towards_enemy", None):
-            # El costo de placaje se descuenta internamente; mover solo si hay celda alcanzable.
-            print("[SADIDA] Sin vision para atacar. Intentando obtener LoS.")
+            # REGLA ABSOLUTA: si estamos placados, NO movernos (el despegue
+            # castiga con PA extra). Re-checkear `enemy_in_melee_range` acá
+            # porque puede haber cambiado desde combo1 (enemigos se movieron
+            # o murieron entre turnos).
+            combo2_tackled = bool(
+                getattr(ctx, "enemy_in_melee_range", None)
+                and ctx.enemy_in_melee_range()
+            )
+            if combo2_tackled:
+                _log.info("[SADIDA] Combo 2: placado + sin LoS — pasando turno "
+                      "(regla: no moverse si placado).")
+                self._pass_turn(ctx)
+                return "done"
+            _log.info("[SADIDA] Sin vision para atacar. Intentando obtener LoS.")
             move_res = ctx.move_towards_enemy(current_mp, desired_range=8)
             if move_res and move_res.get("moved"):
-                time.sleep(0.3)
+                time.sleep(config_delay(ctx.config, "combat_post_move_delay", 0.08))
                 if move_res.get("combat_cell") is not None:
                     ctx.my_cell = move_res["combat_cell"]
 
         # Refrescar estado completo antes de Combo 2: PA y posiciones enemigas actuales del sniffer
-        fresh = ctx.refresh_combat_state(0.15)
+        # 2026-04-23: refresh(0.05) en vez de 0.15 — el último GA/SC del combo 1 ya llegó.
+        # Los 100ms extra no aportan; bajamos solo para dar tiempo a drenar cola.
+        fresh = ctx.refresh_combat_state(0.05)
         if fresh.get("fight_ended"):
             return "combat_ended"
         # Si todos los enemigos murieron (veneno/efecto entre turnos) antes de que llegue el GE:
         if not ctx.enemies:
-            print("[SADIDA] Sin enemigos tras refresco — GE pendiente. Pasando turno.")
+            _log.info("[SADIDA] Sin enemigos tras refresco — GE pendiente. Pasando turno.")
             self._pass_turn(ctx)
             return "done"
         fresh_pa = fresh.get("current_pa")
@@ -1044,7 +1251,7 @@ class Profile(CombatProfile):
                 sacri_pos = ctx.project_self_cell(target_cell) if getattr(ctx, "project_self_cell", None) else None
                 if not sacri_pos:
                     continue
-                print(f"[SADIDA] H4 La Sacrificada intentando celda={target_cell}")
+                _log.info(f"[SADIDA] H4 La Sacrificada intentando celda={target_cell}")
                 ok_sacri, current_pa = self._cast_with_pa_gate(
                     ctx, "H4 La Sacrificada", "4", sacri_pos, _SPELL_LA_SACRIFICADA, 3, current_pa
                 )
@@ -1052,7 +1259,7 @@ class Profile(CombatProfile):
                     return "combat_ended"
                 if ok_sacri:
                     break
-                print(f"[SADIDA] H4 La Sacrificada falló en celda={target_cell}, probando siguiente.")
+                _log.info(f"[SADIDA] H4 La Sacrificada falló en celda={target_cell}, probando siguiente.")
 
         
         while current_pa >= 4 and self._zarza_casts_this_turn < 2:
@@ -1065,7 +1272,7 @@ class Profile(CombatProfile):
                 and (not getattr(ctx, "cell_distance", None) or ctx.cell_distance(ctx.my_cell, e["cell_id"]) <= 8)
             ]
             if not valid_targets:
-                print("[SADIDA] H5 Zarza: sin objetivos válidos en rango/LoS.")
+                _log.info("[SADIDA] H5 Zarza: sin objetivos válidos en rango/LoS.")
                 break
 
             valid_targets.sort(key=lambda e: e.get("hp", 9999))
@@ -1077,9 +1284,9 @@ class Profile(CombatProfile):
                 else target.get("screen_pos")
             )
             if not enemy_pos:
-                print(f"[SADIDA] H5 Zarza: no se pudo proyectar celda={target['cell_id']}. Saltando.")
+                _log.info(f"[SADIDA] H5 Zarza: no se pudo proyectar celda={target['cell_id']}. Saltando.")
                 break
-            print(f"[SADIDA] H5 Zarza -> actor={target.get('id')} cell={target['cell_id']} HP={target.get('hp')} pos={enemy_pos}")
+            _log.info(f"[SADIDA] H5 Zarza -> actor={target.get('id')} cell={target['cell_id']} HP={target.get('hp')} pos={enemy_pos}")
 
             ok_zarza, current_pa = self._repeat_same_spell_until_success(
                 ctx, f"H5 Zarza ({self._zarza_casts_this_turn + 1}/2)", "5", enemy_pos, _SPELL_ZARZA, 4, current_pa,
@@ -1092,7 +1299,7 @@ class Profile(CombatProfile):
             if ok_zarza:
                 self._zarza_casts_this_turn += 1
             else:
-                print("[SADIDA] H5 Zarza falló tras reintentos. Deteniendo ataques.")
+                _log.info("[SADIDA] H5 Zarza falló tras reintentos. Deteniendo ataques.")
                 break
 
         self._pass_turn(ctx)
